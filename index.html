@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Immo-Analyse">
+<meta name="theme-color" content="#0f766e">
+<title>Immobilienanalyse</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{--bg:#f3f5f8;--card:#fff;--text:#1b2430;--muted:#667085;--line:#e1e5eb;--accent:#0f766e;--head:#0f766e;
+        --good:#16a34a;--warn:#d97706;--bad:#dc2626;--info:#2563eb}
+  @media (prefers-color-scheme:dark){
+    :root{--bg:#0f141a;--card:#18202a;--text:#e8edf3;--muted:#93a0b0;--line:#2a3441;--accent:#2dd4bf;--head:#0f766e;
+          --good:#4ade80;--warn:#fbbf24;--bad:#f87171;--info:#60a5fa}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+  header{position:sticky;top:0;z-index:5;background:var(--head);color:#fff;display:flex;gap:10px;align-items:center;
+         padding:calc(env(safe-area-inset-top) + 8px) 12px 8px}
+  header h1{font-size:17px;margin:0;white-space:nowrap}
+  header select{flex:1;min-width:0}
+  main{max-width:980px;margin:0 auto;padding:12px 12px 100px}
+  nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;background:var(--card);border-top:1px solid var(--line);
+      padding-bottom:env(safe-area-inset-bottom)}
+  nav button{flex:1;padding:13px 2px;border:0;background:none;color:var(--muted);font-size:12px;font-weight:600}
+  nav button.on{color:var(--accent);box-shadow:inset 0 3px 0 var(--accent)}
+  .view{display:none}.view.on{display:block}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  details.card>summary{font-weight:700;cursor:pointer;margin:-2px 0 0}
+  details.card[open]>summary{margin-bottom:12px}
+  h2{font-size:16px;margin:0 0 10px}
+  .sub{color:var(--muted);font-size:13px}
+  .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+  .fld label,.chk{display:block;font-size:12px;color:var(--muted)}
+  .fld small{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .u{opacity:.8}.voll{grid-column:1/-1}
+  .chk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--text);padding:6px 0}
+  .chk input{width:auto}
+  input,select,textarea{width:100%;font:inherit;font-size:16px;padding:9px;border:1px solid var(--line);border-radius:8px;
+        background:var(--bg);color:var(--text);margin-top:3px}
+  input[readonly]{opacity:.6}
+  .btn{font:inherit;font-weight:600;padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.danger{color:var(--bad)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-left:5px solid var(--line);border-radius:10px;padding:9px 11px}
+  .kpi.good{border-left-color:var(--good)}.kpi.warn{border-left-color:var(--warn)}.kpi.bad{border-left-color:var(--bad)}.kpi.info{border-left-color:var(--info)}
+  .kpi .l{font-size:12px;color:var(--muted)}.kpi .v{font-size:19px;font-weight:700}.kpi .s{font-size:11px;color:var(--muted)}
+  .obj{cursor:pointer}
+  .obj .t{font-weight:700;font-size:16px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .chip{background:var(--bg);border-radius:8px;padding:4px 8px;font-size:12px}
+  .badge{float:right;min-width:44px;text-align:center;border-radius:20px;padding:3px 10px;font-weight:700;color:#fff;background:var(--muted)}
+  .badge.good{background:var(--good)}.badge.warn{background:var(--warn)}.badge.bad{background:var(--bad)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right}
+  td:first-child,th:first-child{text-align:left}
+  tr.sum td{font-weight:700}tr.base td{background:var(--bg)}
+  .note{padding:9px 11px;border-radius:9px;margin-bottom:7px;font-size:14px;border-left:5px solid var(--info);background:var(--bg)}
+  .note.warn{border-left-color:var(--warn)}.note.ok{border-left-color:var(--good)}
+  .scorebox{display:flex;gap:14px;align-items:center}
+  .score{font-size:38px;font-weight:800;min-width:76px;text-align:center}
+  .score.good{color:var(--good)}.score.warn{color:var(--warn)}.score.bad{color:var(--bad)}
+  .bars{flex:1}.bar{font-size:11px;color:var(--muted);margin:2px 0}
+  .bar i{display:block;height:6px;border-radius:3px;background:var(--accent);margin-top:1px}
+  .chartbox{position:relative;height:260px;margin-bottom:14px}
+  .scroll{overflow-x:auto}
+  small.fine{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Immo-Analyse</h1>
+  <select id="objWahl" aria-label="Objekt wählen"></select>
+</header>
+<main>
+  <section id="view-objekte" class="view"></section>
+  <section id="view-eingabe" class="view"></section>
+  <section id="view-analyse" class="view"></section>
+  <section id="view-finanz" class="view"></section>
+  <section id="view-backup" class="view"></section>
+</main>
+<nav>
+  <button data-tab="objekte">Objekte</button>
+  <button data-tab="eingabe">Eingabe</button>
+  <button data-tab="analyse">Analyse</button>
+  <button data-tab="finanz">Finanzierung</button>
+  <button data-tab="backup">Backup</button>
+</nav>
+
+<script>
+'use strict';
+
+/* =====================================================================
+   KONSTANTEN
+   ===================================================================== */
+const SPEICHER_KEY = 'immoAnalyse.v1';
+
+// Grunderwerbsteuer je Bundesland (Stand 2026, bitte vor Kauf prüfen) – im Formular überschreibbar
+const BUNDESLAENDER = {
+  BW:['Baden-Württemberg',5.0], BY:['Bayern',3.5], BE:['Berlin',6.0], BB:['Brandenburg',6.5],
+  HB:['Bremen',5.5], HH:['Hamburg',5.5], HE:['Hessen',6.0], MV:['Mecklenburg-Vorpommern',6.0],
+  NI:['Niedersachsen',5.0], NW:['Nordrhein-Westfalen',6.5], RP:['Rheinland-Pfalz',5.0], SL:['Saarland',6.5],
+  SN:['Sachsen',3.5], ST:['Sachsen-Anhalt',5.0], SH:['Schleswig-Holstein',6.5], TH:['Thüringen',5.0]
+};
+const ENERGIEKLASSEN = ['A+','A','B','C','D','E','F','G','H'];
+// Bewertungswert je Energieklasse (1 = beste, 0 = schlechteste) für den Score
+const ENERGIE_WERT = {'A+':1, A:.93, B:.82, C:.7, D:.55, E:.4, F:.25, G:.12, H:0};
+
+const CHECKLISTE = [
+  'Energieausweis (Klasse, Gültigkeit) liegt vor',
+  'Grundbuchauszug geprüft (Lasten, Wegerechte, Wohnrecht)',
+  'Teilungserklärung und Gemeinschaftsordnung gelesen',
+  'Protokolle der Eigentümerversammlungen (letzte 3 Jahre) geprüft',
+  'Wirtschaftsplan und letzte Hausgeldabrechnung geprüft',
+  'Höhe der Instandhaltungsrücklage erfragt',
+  'Beschlossene / geplante Sonderumlagen geklärt',
+  'Mietvertrag, Mietzahlungen und Kaution geprüft',
+  'Vergleichsmiete / Mietspiegel recherchiert',
+  'Besichtigung: Dach, Fassade, Keller, Feuchtigkeit',
+  'Alter von Heizung, Fenstern, Elektrik, Leitungen geklärt',
+  'Anstehende Sanierungen und Kosten eingeschätzt',
+  'Baulasten, Altlasten, Erschließung geklärt',
+  'Finanzierungsangebote mehrerer Banken eingeholt',
+  'Notarvertragsentwurf mind. 14 Tage vor Termin erhalten'
+];
+
+/* =====================================================================
+   HILFSFUNKTIONEN
+   ===================================================================== */
+const Fmt = {
+  eur: (v, d = 0) => (v == null || isNaN(v)) ? '–' :
+       new Intl.NumberFormat('de-DE', {style:'currency', currency:'EUR', minimumFractionDigits:d, maximumFractionDigits:d}).format(v),
+  num: (v, d = 1) => (v == null || isNaN(v)) ? '–' :
+       new Intl.NumberFormat('de-DE', {minimumFractionDigits:d, maximumFractionDigits:d}).format(v),
+  pct: (v, d = 2) => (v == null || isNaN(v)) ? '–' : Fmt.num(v, d) + ' %',
+  kurz: v => Math.abs(v) >= 1e6 ? Fmt.num(v / 1e6, 1) + ' Mio' : Math.round(v / 1000) + ' T€'
+};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// Ampelfarbe: hoeherBesser=true -> ab "gruen" grün, ab "gelb" gelb, sonst rot
+const ampel = (v, gruen, gelb, hoeherBesser = true) => {
+  if (v == null) return '';
+  if (hoeherBesser) return v >= gruen ? 'good' : v >= gelb ? 'warn' : 'bad';
+  return v <= gruen ? 'good' : v <= gelb ? 'warn' : 'bad';
+};
+const neueId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id' + Date.now() + Math.random().toString(16).slice(2);
+
+/* =====================================================================
+   MODELL: Immobilie
+   ===================================================================== */
+class Immobilie {
+  static startStandard() {            // Standard-Starttermin der Finanzierung: nächster Monat
+    const d = new Date(); d.setMonth(d.getMonth() + 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+  static standardFinanz() {
+    return {kaufpreisLink:true, kaufpreis:0, eigenkapital:0, modus:'tilgung', rate:0, tilgung:2,
+            zins1:3.8, bindung:10, zins2:4.5, rateNach:null, sonder:0, start:Immobilie.startStandard(), steuersatz:35};
+  }
+  static standard() {
+    return {id:'', name:'Neues Objekt', ort:'', bundesland:'NW', art:'Eigentumswohnung', baujahr:null, wohnflaeche:0,
+            zimmer:null, grundstueck:null, etage:'', lageMakro:3, lageMikro:3, zustand:3,
+            energieklasse:'D', heizung:'Gas', energiekennwert:null,
+            kaufpreis:0, sanierung:0, grest:BUNDESLAENDER.NW[1], notar:1.8, makler:3.57, sonstigeNK:0,
+            kaltmiete:0, mietausfall:2, vergleichsmiete:null,
+            nichtUml:0, instandhaltung:10, marktpreis:null, wertsteigerung:1.5, gebaeudeanteil:75, afa:2,
+            notizen:'', check:{}, finanz:Immobilie.standardFinanz()};
+  }
+  // Fehlende Felder mit Standardwerten auffüllen (z. B. nach Import oder App-Update)
+  static normalisiere(roh) {
+    const s = Immobilie.standard();
+    const o = Object.assign(s, roh || {});
+    o.finanz = Object.assign(Immobilie.standardFinanz(), (roh && roh.finanz) || {});
+    o.check = (roh && roh.check) || {};
+    if (!o.id) o.id = neueId();
+    return o;
+  }
+  static neu() { return Immobilie.normalisiere({id:neueId()}); }
+  static beispiel() {
+    return Immobilie.normalisiere({
+      id:neueId(), name:'Beispiel-Wohnung (bitte löschen)', ort:'Musterstadt, Zentrum', bundesland:'NW', baujahr:1998,
+      wohnflaeche:65, zimmer:3, lageMakro:3, lageMikro:4, zustand:4, energieklasse:'C', heizung:'Fernwärme',
+      kaufpreis:220000, grest:6.5, kaltmiete:780, nichtUml:45, instandhaltung:10, marktpreis:3300, vergleichsmiete:12,
+      finanz:{eigenkapital:45000, modus:'rate', rate:950, zins1:3.8, bindung:10, zins2:4.5}
+    });
+  }
+}
+
+/* =====================================================================
+   RECHENKERN: Kennzahlen
+   ===================================================================== */
+class Rechner {
+  // Kaufnebenkosten (optional mit abweichendem Kaufpreis)
+  static nebenkosten(o, kp = o.kaufpreis) {
+    kp = kp || 0;
+    const grest = kp * (o.grest || 0) / 100, notar = kp * (o.notar || 0) / 100;
+    const makler = kp * (o.makler || 0) / 100, sonst = o.sonstigeNK || 0;
+    return {grest, notar, makler, sonst, summe: grest + notar + makler + sonst};
+  }
+  static kennzahlen(o) {
+    const kp = o.kaufpreis || 0, wf = o.wohnflaeche || 0;
+    const nk = Rechner.nebenkosten(o);
+    const gesamt = kp + nk.summe + (o.sanierung || 0);
+    const jkm = (o.kaltmiete || 0) * 12;
+    const mietausfall = jkm * (o.mietausfall || 0) / 100;
+    const bewirtOhneAusfall = (o.nichtUml || 0) * 12 + (o.instandhaltung || 0) * wf;
+    const bewirt = bewirtOhneAusfall + mietausfall;
+    const noi = jkm - bewirt;
+    const kpQm = wf > 0 ? kp / wf : null, mieteQm = wf > 0 ? (o.kaltmiete || 0) / wf : null;
+    return {
+      kp, wf, nk, gesamt, jkm, mietausfall, bewirt, bewirtOhneAusfall, noi,
+      bruttoRendite: (kp > 0 && jkm > 0) ? jkm / kp * 100 : null,
+      nettoRendite:  (gesamt > 0 && jkm > 0) ? noi / gesamt * 100 : null,
+      faktor:        jkm > 0 ? kp / jkm : null,
+      nettoFaktor:   noi > 0 ? gesamt / noi : null,
+      kpQm, gesamtQm: wf > 0 ? gesamt / wf : null, mieteQm,
+      vsMarkt:  (o.marktpreis && kpQm) ? (kpQm / o.marktpreis - 1) * 100 : null,
+      vsMiete:  (o.vergleichsmiete && mieteQm) ? (mieteQm / o.vergleichsmiete - 1) * 100 : null,
+      preisBeiRendite: r => jkm > 0 ? jkm / (r / 100) : null     // Kaufpreis, der eine Ziel-Bruttorendite ergibt
+    };
+  }
+}
+
+/* =====================================================================
+   RECHENKERN: Tilgungsplan (monatliche Berechnung)
+   Zins/12 pro Monat, Sondertilgung jeweils zum Jahresende.
+   ===================================================================== */
+class Tilgungsplan {
+  constructor(p) { this.p = p; this.berechne(); }
+  berechne() {
+    const {darlehen, zins1, zins2, bindung, rate1, rate2, sonder = 0, maxMonate = 720} = this.p;
+    const bindM = Math.round((bindung || 0) * 12);
+    let rest = darlehen, monat = 0, restNachBindung = null;
+    let gZins = 0, gTilg = 0, gSonder = 0, jz = 0, jt = 0, js = 0;
+    const jahre = [];
+    while (rest > 0.005 && monat < maxMonate) {
+      monat++;
+      const inBindung = monat <= bindM;
+      const zinsen = rest * (inBindung ? zins1 : zins2) / 1200;
+      let zahlung = inBindung ? rate1 : rate2;
+      if (zahlung > rest + zinsen) zahlung = rest + zinsen;      // letzte Rate
+      const tilg = zahlung - zinsen;
+      rest -= tilg; jz += zinsen; jt += tilg; gZins += zinsen; gTilg += tilg;
+      if (monat % 12 === 0 && sonder > 0 && rest > 0.005) {       // Sondertilgung zum Jahresende
+        const s = Math.min(sonder, rest); rest -= s; js += s; gSonder += s;
+      }
+      if (monat === bindM) restNachBindung = rest;
+      if (monat % 12 === 0 || rest <= 0.005) {
+        jahre.push({jahr: Math.ceil(monat / 12), zinsen: jz, tilgung: jt, sonder: js, rest: Math.max(rest, 0)});
+        jz = jt = js = 0;
+      }
+    }
+    this.monate = monat;
+    this.getilgt = rest <= 0.005;
+    this.gesamtZinsen = gZins; this.gesamtTilgung = gTilg; this.gesamtSonder = gSonder;
+    this.restEnde = Math.max(rest, 0);
+    this.restNachBindung = restNachBindung === null ? (monat < bindM ? 0 : rest) : restNachBindung;
+    this.jahre = jahre;
+  }
+  // Monat der letzten Rate als Text, z. B. "März 2051"
+  datumEnde(startStr) {
+    const [y, m] = (startStr || Immobilie.startStandard()).split('-').map(Number);
+    return new Date(y, m - 1 + Math.max(this.monate - 1, 0), 1).toLocaleDateString('de-DE', {month:'long', year:'numeric'});
+  }
+  laufzeitText() {
+    if (!this.getilgt) return 'nicht in 60 Jahren';
+    const j = Math.floor(this.monate / 12), m = this.monate % 12;
+    return j + ' J.' + (m ? ' ' + m + ' M.' : '');
+  }
+}
+
+/* =====================================================================
+   RECHENKERN: Finanzierung und Cashflow
+   ===================================================================== */
+class Finanzierung {
+  // Kaufpreis aus dem Objekt übernehmen, solange die Verknüpfung aktiv ist
+  static sync(o) { if (o.finanz.kaufpreisLink) o.finanz.kaufpreis = o.kaufpreis; }
+
+  static berechne(o) {
+    const f = o.finanz, kp = f.kaufpreis || 0;
+    if (kp <= 0) return null;
+    const nk = Rechner.nebenkosten(o, kp);
+    const bedarf = kp + nk.summe + (o.sanierung || 0);
+    const ek = f.eigenkapital || 0;
+    const darlehen = Math.max(0, bedarf - ek);
+    const rate1 = f.modus === 'rate' ? (f.rate || 0) : darlehen * ((f.zins1 || 0) + (f.tilgung || 0)) / 1200;
+    const rate2 = f.rateNach > 0 ? f.rateNach : rate1;
+    const plan = new Tilgungsplan({darlehen, zins1:f.zins1 || 0, zins2:f.zins2 || 0, bindung:f.bindung || 0,
+                                   rate1, rate2, sonder:f.sonder || 0});
+    const j1 = plan.jahre[0] || {zinsen:0, tilgung:0};
+    return {
+      kaufpreis:kp, nk, bedarf, ek, darlehen, rate1, rate2, plan,
+      ltv: darlehen / kp * 100, ekQuote: bedarf > 0 ? ek / bedarf * 100 : 0,
+      tilgungStart: darlehen > 0 ? (rate1 * 12 - darlehen * (f.zins1 || 0) / 100) / darlehen * 100 : 0,
+      zinsJ1: j1.zinsen, tilgJ1: j1.tilgung, zahlungJ1: j1.zinsen + j1.tilgung
+    };
+  }
+
+  // Cashflow vor/nach Steuern (Jahr 1, vereinfacht)
+  static cashflow(o, k, fin) {
+    if (!fin || k.jkm <= 0) return null;
+    const vor = k.noi - fin.zahlungJ1;
+    const afa = (fin.kaufpreis + fin.nk.summe) * (o.gebaeudeanteil || 0) / 100 * (o.afa || 0) / 100;
+    const ergebnis = k.noi - fin.zinsJ1 - afa;                         // steuerliches Ergebnis aus Vermietung
+    const steuerwirkung = -ergebnis * (o.finanz.steuersatz || 0) / 100; // + = Erstattung, - = Steuerzahlung
+    return {
+      vor, proMonat: vor / 12, nach: vor + steuerwirkung, nachMonat: (vor + steuerwirkung) / 12,
+      afa, ergebnis, steuerwirkung, quote: vor / k.jkm * 100,
+      ekRendite: fin.ek > 0 ? (vor + fin.tilgJ1) / fin.ek * 100 : null,
+      dscr: fin.zahlungJ1 > 0 ? k.noi / fin.zahlungJ1 : null
+    };
+  }
+
+  // Szenarien: wie wirkt sich ein anderer Anschlusszins aus?
+  static szenarien(fin) {
+    return [-1, 0, 1, 2, 3].map(d => {
+      const zins2 = Math.max(0, fin.plan.p.zins2 + d);
+      return {d, zins2, plan: new Tilgungsplan(Object.assign({}, fin.plan.p, {zins2}))};
+    });
+  }
+}
+
+/* =====================================================================
+   BEWERTUNG: Score, Hinweise
+   ===================================================================== */
+class Bewertung {
+  static analyse(o) {
+    Finanzierung.sync(o);
+    const k = Rechner.kennzahlen(o);
+    const fin = Finanzierung.berechne(o);
+    const cf = Finanzierung.cashflow(o, k, fin);
+    const score = Bewertung.score(o, k, (fin && fin.darlehen > 0) ? cf : null);
+    return {k, fin, cf, score, hinweise: Bewertung.hinweise(o, k, fin, cf)};
+  }
+
+  // Gewichteter Score 0–100 (nur wenn Kaufpreis und Miete vorhanden)
+  static score(o, k, cf) {
+    if (!(k.kp > 0 && k.jkm > 0)) return null;
+    const lin = (x, a, b) => Math.max(0, Math.min(1, (x - a) / (b - a)));
+    const teile = [
+      {n:'Bruttomietrendite', w:20, v:lin(k.bruttoRendite, 2, 6)},
+      {n:'Nettomietrendite',  w:20, v:lin(k.nettoRendite, 1.5, 4)},
+      {n:'Kaufpreisfaktor',   w:10, v:lin(k.faktor, 30, 15)},
+      {n:'Lage',              w:15, v:((o.lageMakro + o.lageMikro) / 2 - 1) / 4},
+      {n:'Zustand',           w:10, v:(o.zustand - 1) / 4},
+      {n:'Energieklasse',     w:10, v:ENERGIE_WERT[o.energieklasse] ?? .5}
+    ];
+    if (cf) teile.push({n:'Cashflow', w:15, v:lin(cf.quote, -30, 10)});
+    const wSum = teile.reduce((a, t) => a + t.w, 0);
+    const wert = Math.round(teile.reduce((a, t) => a + t.w * t.v, 0) / wSum * 100);
+    const urteil = wert >= 70 ? 'Attraktiv' : wert >= 55 ? 'Solide' : wert >= 40 ? 'Genau prüfen' : 'Kritisch';
+    return {wert, urteil, teile, cls: wert >= 70 ? 'good' : wert >= 45 ? 'warn' : 'bad'};
+  }
+
+  static hinweise(o, k, fin, cf) {
+    const h = [], add = (typ, text) => h.push({typ, text});
+    if (['F','G','H'].includes(o.energieklasse))
+      add('warn', `Energieklasse ${o.energieklasse}: hoher Energiebedarf, Sanierungspflichten (GEG) und Wertabschläge möglich – Sanierungskosten einplanen.`);
+    else if (['A+','A','B'].includes(o.energieklasse))
+      add('ok', `Energieklasse ${o.energieklasse}: gute Energieeffizienz, geringeres Sanierungsrisiko.`);
+    if (o.baujahr && o.baujahr < 1978)
+      add('info', 'Baujahr vor 1978 (vor der ersten Wärmeschutzverordnung): Dämmung, Heizung, Leitungen und Elektrik besonders prüfen.');
+    if (k.faktor != null) {
+      if (k.faktor > 27) add('warn', `Kaufpreisfaktor ${Fmt.num(k.faktor)}: Kaufpreis im Verhältnis zur Miete hoch (günstig: unter 20).`);
+      else if (k.faktor <= 20) add('ok', `Kaufpreisfaktor ${Fmt.num(k.faktor)}: günstiges Verhältnis von Kaufpreis zu Miete.`);
+    }
+    if (k.vsMarkt != null) {
+      if (k.vsMarkt > 10) add('warn', `Kaufpreis/m² liegt ${Fmt.num(k.vsMarkt, 0)} % über dem Marktpreis – Verhandlungsspielraum prüfen.`);
+      else if (k.vsMarkt < -5) add('ok', `Kaufpreis/m² liegt ${Fmt.num(-k.vsMarkt, 0)} % unter dem Marktpreis.`);
+    }
+    if (k.vsMiete != null) {
+      if (k.vsMiete > 10) add('warn', `Die Miete liegt ${Fmt.num(k.vsMiete, 0)} % über der Vergleichsmiete – Mietpreisbremse/Mietspiegel prüfen, Miete ist ggf. nicht haltbar.`);
+      else if (k.vsMiete < -10) add('info', `Die Miete liegt ${Fmt.num(-k.vsMiete, 0)} % unter der Vergleichsmiete – mögliches Mietsteigerungspotenzial (Kappungsgrenzen beachten).`);
+    }
+    if (k.wf > 0 && k.jkm > 0 && k.bewirtOhneAusfall / k.wf < 15)
+      add('info', `Verwaltung + Instandhaltung betragen nur ${Fmt.num(k.bewirtOhneAusfall / k.wf)} €/m²/Jahr – üblich sind etwa 15–35 €/m²/Jahr. Annahme prüfen.`);
+    if (fin) {
+      if (fin.ltv > 100) add('warn', `Beleihungsauslauf ${Fmt.num(fin.ltv, 0)} %: Vollfinanzierung inkl. Nebenkosten – schlechtere Konditionen, hohes Risiko.`);
+      else if (fin.ltv > 90) add('warn', `Beleihungsauslauf ${Fmt.num(fin.ltv, 0)} %: hohe Fremdfinanzierung, Zinsaufschläge wahrscheinlich.`);
+      if (fin.darlehen > 0) {
+        if (!fin.plan.getilgt) add('warn', 'Mit dieser Rate wird das Darlehen nicht (in 60 Jahren) getilgt – Rate erhöhen.');
+        else if (fin.tilgungStart < 2) add('warn', `Anfangstilgung nur ${Fmt.num(fin.tilgungStart)} %: sehr lange Laufzeit und hohe Zinskosten. Üblich sind mindestens 2 %.`);
+        if (fin.plan.restNachBindung > fin.darlehen * 0.5)
+          add('info', `Nach Ende der Zinsbindung sind noch ${Fmt.num(fin.plan.restNachBindung / fin.darlehen * 100, 0)} % des Darlehens offen – Zinsänderungsrisiko (siehe Szenarien unter Finanzierung).`);
+        if (k.nettoRendite != null && k.nettoRendite < fin.plan.p.zins1)
+          add('warn', `Nettomietrendite (${Fmt.pct(k.nettoRendite)}) liegt unter dem Darlehenszins (${Fmt.pct(fin.plan.p.zins1)}): Fremdkapital wirkt als negativer Hebel.`);
+      }
+    }
+    if (cf) {
+      if (cf.vor < 0) add('warn', `Negativer Cashflow: ca. ${Fmt.eur(-cf.proMonat)} pro Monat Zuzahlung vor Steuern. Reserve einplanen.`);
+      else add('ok', `Positiver Cashflow vor Steuern: ca. ${Fmt.eur(cf.proMonat)} pro Monat.`);
+      if (cf.dscr != null && cf.dscr < 1) add('warn', 'Schuldendienstdeckung unter 1: Die Nettomiete deckt Zins und Tilgung nicht.');
+    }
+    add('info', 'Spekulationsfrist: Gewinne aus dem Verkauf innerhalb von 10 Jahren sind in der Regel steuerpflichtig (bei Vermietung).');
+    return h;
+  }
+}
+
+/* =====================================================================
+   PERSISTENZ
+   ===================================================================== */
+class Speicher {
+  static laden() { try { const r = localStorage.getItem(SPEICHER_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+  static speichern(s) { try { localStorage.setItem(SPEICHER_KEY, JSON.stringify(s)); } catch (e) { /* z. B. privater Modus */ } }
+}
+
+// ===== UI =====
+
+/* =====================================================================
+   DIAGRAMME (Chart.js)
+   ===================================================================== */
+class Diagramme {
+  constructor() { this.charts = {}; }
+  farben() {
+    const c = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    return {accent:c('--accent'), muted:c('--muted'), good:c('--good'), warn:c('--warn'), line:c('--line'), text:c('--text')};
+  }
+  zeichne(id, config) {
+    if (this.charts[id]) this.charts[id].destroy();
+    const el = document.getElementById(id);
+    if (!el || typeof Chart === 'undefined') return;           // z. B. offline: Diagramm entfällt
+    this.charts[id] = new Chart(el, config);
+  }
+  // Senkrechte Linie bei Ende der Zinsbindung
+  marker() {
+    return {id:'bindung', afterDatasetsDraw(chart, args, opt) {
+      if (opt.index == null || opt.index <= 0) return;
+      const {ctx, chartArea:{top, bottom}, scales:{x}} = chart;
+      const px = x.getPixelForValue(opt.index);
+      ctx.save(); ctx.setLineDash([5, 4]); ctx.strokeStyle = opt.farbe; ctx.beginPath();
+      ctx.moveTo(px, top); ctx.lineTo(px, bottom); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = opt.farbe; ctx.font = '11px sans-serif';
+      ctx.fillText('Zinsbindung endet', Math.min(px + 4, chart.width - 110), top + 12); ctx.restore();
+    }};
+  }
+  basis(c) {
+    Chart.defaults.color = c.muted;
+    return {responsive:true, maintainAspectRatio:false, animation:false,
+            interaction:{mode:'index', intersect:false}};
+  }
+  // Restschuld, Immobilienwert, Nettovermögen über die Jahre
+  restschuld(id, fin, o) {
+    const c = this.farben(), p = fin.plan, n = p.jahre.length;
+    const labels = Array.from({length:n + 1}, (_, i) => i);
+    const rest = [fin.darlehen, ...p.jahre.map(j => j.rest)];
+    const g = 1 + (o.wertsteigerung || 0) / 100;
+    const wert = labels.map(i => fin.kaufpreis * Math.pow(g, i));
+    const netto = labels.map((_, i) => wert[i] - rest[i]);
+    this.zeichne(id, {type:'line', plugins:[this.marker()],
+      data:{labels, datasets:[
+        {label:'Restschuld', data:rest, borderColor:c.accent, backgroundColor:'rgba(15,118,110,.15)', fill:true, tension:.2, pointRadius:0},
+        {label:'Immobilienwert', data:wert, borderColor:c.muted, borderDash:[6, 4], pointRadius:0},
+        {label:'Nettovermögen', data:netto, borderColor:c.good, pointRadius:0}]},
+      options:Object.assign(this.basis(c), {
+        plugins:{bindung:{index:p.p.bindung, farbe:c.warn},
+                 tooltip:{callbacks:{title:i => 'Jahr ' + i[0].label, label:i => i.dataset.label + ': ' + Fmt.eur(i.parsed.y)}}},
+        scales:{x:{title:{display:true, text:'Jahre'}, grid:{color:c.line}},
+                y:{ticks:{callback:v => Fmt.kurz(v)}, grid:{color:c.line}}}})});
+  }
+  // Zins- und Tilgungsanteil je Jahr
+  zinsTilgung(id, fin) {
+    const c = this.farben(), j = fin.plan.jahre;
+    this.zeichne(id, {type:'bar',
+      data:{labels:j.map(x => x.jahr), datasets:[
+        {label:'Zinsen', data:j.map(x => x.zinsen), backgroundColor:c.warn},
+        {label:'Tilgung', data:j.map(x => x.tilgung + x.sonder), backgroundColor:c.accent}]},
+      options:Object.assign(this.basis(c), {
+        plugins:{tooltip:{callbacks:{title:i => 'Jahr ' + i[0].label, label:i => i.dataset.label + ': ' + Fmt.eur(i.parsed.y)}}},
+        scales:{x:{stacked:true, title:{display:true, text:'Jahr'}, grid:{display:false}},
+                y:{stacked:true, ticks:{callback:v => Fmt.kurz(v)}, grid:{color:c.line}}}})});
+  }
+}
+
+/* =====================================================================
+   FORMULARDEFINITIONEN
+   k = Feldname, l = Label, u = Einheit, t = Typ, o = Optionen, opt = optional (leer erlaubt),
+   num = Select liefert Zahl, h = Hinweis, voll = volle Breite
+   ===================================================================== */
+const OPT_BUNDESLAND = Object.entries(BUNDESLAENDER).map(([c, [n]]) => [c, n]);
+const OPT_STUFEN = (a, b, c, d, e) => [[1, '1 – ' + a], [2, '2 – ' + b], [3, '3 – ' + c], [4, '4 – ' + d], [5, '5 – ' + e]];
+
+const FELDER_OBJEKT = [
+  {gruppe:'Objekt und Lage', felder:[
+    {k:'name', l:'Bezeichnung', t:'text', voll:true},
+    {k:'ort', l:'Lage (Adresse / Stadtteil)', t:'text', voll:true},
+    {k:'bundesland', l:'Bundesland', t:'select', o:OPT_BUNDESLAND, h:'setzt die Grunderwerbsteuer'},
+    {k:'art', l:'Objektart', t:'select', o:['Eigentumswohnung','Einfamilienhaus','Mehrfamilienhaus','Sonstige'].map(x => [x, x])},
+    {k:'baujahr', l:'Baujahr', t:'number', step:1, opt:true},
+    {k:'wohnflaeche', l:'Wohnfläche', u:'m²', t:'number'},
+    {k:'zimmer', l:'Zimmer', t:'number', opt:true},
+    {k:'grundstueck', l:'Grundstück', u:'m²', t:'number', opt:true},
+    {k:'etage', l:'Etage / Besonderheiten', t:'text'},
+    {k:'lageMakro', l:'Makrolage (Stadt / Region)', t:'select', num:true, o:OPT_STUFEN('schwach','unterdurchschnittlich','durchschnittlich','gut','sehr gut'), h:'Bevölkerung, Arbeitsmarkt, Nachfrage'},
+    {k:'lageMikro', l:'Mikrolage (Quartier)', t:'select', num:true, o:OPT_STUFEN('schwach','unterdurchschnittlich','durchschnittlich','gut','sehr gut'), h:'ÖPNV, Einkauf, Schulen, Lärm'},
+    {k:'zustand', l:'Zustand', t:'select', num:true, o:OPT_STUFEN('sanierungsbedürftig','renovierungsbedürftig','gepflegt','gut / teilsaniert','neuwertig / kernsaniert')}]},
+  {gruppe:'Energie', felder:[
+    {k:'energieklasse', l:'Energieeffizienzklasse', t:'select', o:ENERGIEKLASSEN.map(x => [x, x])},
+    {k:'heizung', l:'Heizungsart', t:'select', o:['Gas','Öl','Fernwärme','Wärmepumpe','Pellets / Holz','Strom','Sonstige'].map(x => [x, x])},
+    {k:'energiekennwert', l:'Endenergiebedarf', u:'kWh/(m²·a)', t:'number', opt:true}]},
+  {gruppe:'Kaufpreis', felder:[
+    {k:'kaufpreis', l:'Kaufpreis', u:'€', t:'number'},
+    {k:'sanierung', l:'Geplante Sanierung / Renovierung', u:'€', t:'number', h:'wird zur Gesamtinvestition addiert'}]},
+  {gruppe:'Kaufnebenkosten', felder:[
+    {k:'grest', l:'Grunderwerbsteuer', u:'%', t:'number', h:'Satz je Bundesland, bitte vor Kauf prüfen'},
+    {k:'notar', l:'Notar und Grundbuch', u:'%', t:'number', h:'üblich 1,5–2 %'},
+    {k:'makler', l:'Maklerprovision (Käuferanteil)', u:'%', t:'number', h:'0 ohne Makler; häufig 3,57 % inkl. MwSt.'},
+    {k:'sonstigeNK', l:'Sonstige Kosten', u:'€', t:'number', h:'z. B. Gutachter, Umzug'}]},
+  {gruppe:'Einnahmen', felder:[
+    {k:'kaltmiete', l:'Nettokaltmiete', u:'€ / Monat', t:'number', h:'bei Eigennutzung: ortsübliche Vergleichsmiete'},
+    {k:'mietausfall', l:'Mietausfallwagnis', u:'% der Miete', t:'number', h:'üblich 2–3 %'},
+    {k:'vergleichsmiete', l:'Vergleichsmiete laut Mietspiegel', u:'€/m² Monat', t:'number', opt:true}]},
+  {gruppe:'Laufende Kosten (nicht umlagefähig)', felder:[
+    {k:'nichtUml', l:'Nicht umlagefähige Kosten', u:'€ / Monat', t:'number', h:'Verwaltung, WEG-Rücklage, Sonderumlagen'},
+    {k:'instandhaltung', l:'Eigene Instandhaltungsreserve', u:'€/m² Jahr', t:'number', h:'üblich 8–15; weniger ansetzen, wenn WEG-Rücklage oben enthalten ist'}]},
+  {gruppe:'Markt und Steuer', felder:[
+    {k:'marktpreis', l:'Marktpreis in der Lage', u:'€/m²', t:'number', opt:true, h:'für Preisvergleich'},
+    {k:'wertsteigerung', l:'Wertsteigerung p. a.', u:'%', t:'number', h:'für das Diagramm, vorsichtig ansetzen'},
+    {k:'gebaeudeanteil', l:'Gebäudeanteil am Kaufpreis', u:'%', t:'number', h:'Grundstücksanteil ist nicht abschreibbar'},
+    {k:'afa', l:'AfA-Satz', u:'%', t:'number', h:'üblich 2 % (ab 1925), 2,5 % (davor), 3 % Neubau ab 2023'}]},
+  {gruppe:'Notizen', felder:[{k:'notizen', l:'Notizen', t:'textarea', voll:true}]}
+];
+
+const FELDER_FINANZ = [
+  {gruppe:'Finanzierungsbedarf', felder:[
+    {k:'kaufpreisLink', l:'Kaufpreis aus Objekt übernehmen', t:'checkbox', voll:true},
+    {k:'kaufpreis', l:'Kaufpreis', u:'€', t:'number', ro:f => f.kaufpreisLink},
+    {k:'eigenkapital', l:'Eigenkapital (inkl. Nebenkosten)', u:'€', t:'number', h:'Darlehen = Kaufpreis + Nebenkosten + Sanierung − Eigenkapital'}]},
+  {gruppe:'Zinsen und Tilgung', felder:[
+    {k:'modus', l:'Vorgabe', t:'select', o:[['rate','Monatliche Rate'],['tilgung','Anfängliche Tilgung']]},
+    {k:'rate', l:'Monatliche Rate (Zins + Tilgung)', u:'€', t:'number', zeige:f => f.modus === 'rate'},
+    {k:'tilgung', l:'Anfängliche Tilgung', u:'% p. a.', t:'number', zeige:f => f.modus === 'tilgung'},
+    {k:'zins1', l:'Sollzins in der Zinsbindung', u:'% p. a.', t:'number'},
+    {k:'bindung', l:'Zinsbindung', u:'Jahre', t:'number', step:1},
+    {k:'zins2', l:'Anschlusszins nach der Bindung', u:'% p. a.', t:'number', h:'Annahme für die Anschlussfinanzierung'},
+    {k:'rateNach', l:'Rate nach der Zinsbindung', u:'€', t:'number', opt:true, h:'leer = gleiche Rate wie zuvor'},
+    {k:'sonder', l:'Sondertilgung', u:'€ pro Jahr', t:'number', h:'wird jeweils zum Jahresende getilgt'},
+    {k:'start', l:'Beginn der Rückzahlung', t:'month'}]},
+  {gruppe:'Steuer (vereinfachte Schätzung)', felder:[
+    {k:'steuersatz', l:'Persönlicher Grenzsteuersatz', u:'%', t:'number', h:'für Cashflow nach Steuern'}]}
+];
+
+/* =====================================================================
+   APP / OBERFLÄCHE
+   ===================================================================== */
+class App {
+  constructor() {
+    const g = Speicher.laden();
+    this.s = (g && Array.isArray(g.objekte))
+      ? {objekte:g.objekte.map(Immobilie.normalisiere), aktivId:g.aktivId, sort:g.sort || 'score'}
+      : {objekte:[Immobilie.beispiel()], aktivId:null, sort:'score'};
+    if (!this.aktiv()) this.s.aktivId = this.s.objekte[0] ? this.s.objekte[0].id : null;
+    this.tab = 'objekte';
+    this.diagramme = new Diagramme();
+    this.bind();
+    this.setTab('objekte');
+  }
+  aktiv() { return this.s.objekte.find(o => o.id === this.s.aktivId) || null; }
+  speichern() { Speicher.speichern(this.s); }
+
+  /* ---------- Ereignisse ---------- */
+  bind() {
+    document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => this.setTab(b.dataset.tab)));
+    $('#objWahl').addEventListener('change', e => { this.s.aktivId = e.target.value; this.speichern(); this.renderTab(); });
+    const main = $('main');
+    main.addEventListener('input', e => this.onInput(e));
+    main.addEventListener('change', e => this.onInput(e));
+    main.addEventListener('click', e => this.onClick(e));
+  }
+  setTab(t) {
+    this.tab = t;
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + t));
+    this.renderHeader(); this.renderTab(); window.scrollTo(0, 0);
+  }
+  renderTab() {
+    ({objekte:() => this.renderObjekte(), eingabe:() => this.renderEingabe(), analyse:() => this.renderAnalyse(),
+      finanz:() => this.renderFinanz(), backup:() => this.renderBackup()})[this.tab]();
+  }
+  renderHeader() {
+    const sel = $('#objWahl');
+    sel.innerHTML = this.s.objekte.length
+      ? this.s.objekte.map(o => `<option value="${o.id}"${o.id === this.s.aktivId ? ' selected' : ''}>${esc(o.name)}</option>`).join('')
+      : '<option>Kein Objekt</option>';
+  }
+
+  onClick(e) {
+    const b = e.target.closest('[data-action]');
+    if (b) return this.aktion(b.dataset.action, b.dataset.id);
+    const karte = e.target.closest('.obj[data-id]');
+    if (karte) { this.s.aktivId = karte.dataset.id; this.speichern(); this.setTab('analyse'); }
+  }
+  aktion(a, id) {
+    const o = this.s.objekte.find(x => x.id === id) || this.aktiv();
+    if (a === 'neu') {
+      const n = Immobilie.neu(); this.s.objekte.push(n); this.s.aktivId = n.id; this.speichern(); this.setTab('eingabe');
+    } else if (a === 'edit') { this.s.aktivId = id; this.speichern(); this.setTab('eingabe');
+    } else if (a === 'dup' && o) {
+      const n = Immobilie.normalisiere(JSON.parse(JSON.stringify(o))); n.id = neueId(); n.name += ' (Kopie)';
+      this.s.objekte.push(n); this.s.aktivId = n.id; this.speichern(); this.setTab('objekte');
+    } else if (a === 'del' && o) {
+      if (!confirm('„' + o.name + '“ wirklich löschen?')) return;
+      this.s.objekte = this.s.objekte.filter(x => x.id !== o.id);
+      this.s.aktivId = this.s.objekte[0] ? this.s.objekte[0].id : null; this.speichern(); this.setTab('objekte');
+    } else if (a === 'ek-vorschlag' && o) {
+      const nk = Rechner.nebenkosten(o, o.finanz.kaufpreis).summe;
+      o.finanz.eigenkapital = Math.round(nk + 0.2 * o.finanz.kaufpreis); this.speichern(); this.renderFinanz();
+    } else if (a === 'export') { this.exportieren();
+    } else if (a === 'import') { $('#importDatei').click();
+    } else if (a === 'alles-loeschen') {
+      if (!confirm('Wirklich ALLE Objekte auf diesem Gerät löschen?')) return;
+      this.s.objekte = []; this.s.aktivId = null; this.speichern(); this.setTab('objekte');
+    }
+  }
+  onInput(e) {
+    const el = e.target;
+    if (el.id === 'importDatei') return this.importieren(el.files[0]);
+    if (el.id === 'sort') { this.s.sort = el.value; this.speichern(); return this.renderObjekte(); }
+    const o = this.aktiv(); if (!o) return;
+    if (el.dataset.check != null && el.dataset.check !== '') {       // Checkliste
+      o.check[el.dataset.check] = el.checked; this.speichern();
+      const n = CHECKLISTE.filter((_, i) => o.check[i]).length;
+      const z = $('#checkZaehler'); if (z) z.textContent = n + ' / ' + CHECKLISTE.length + ' erledigt';
+      return;
+    }
+    const k = el.dataset.k; if (!k) return;
+    const ziel = el.dataset.s === 'f' ? o.finanz : o;
+    let v;
+    if (el.type === 'checkbox') v = el.checked;
+    else if (el.type === 'number') { v = el.value === '' ? (el.dataset.opt ? null : 0) : parseFloat(el.value); if (Number.isNaN(v)) v = 0; }
+    else if (el.tagName === 'SELECT' && el.dataset.num) v = parseFloat(el.value);
+    else v = el.value;
+    ziel[k] = v;
+    if (k === 'bundesland' && el.dataset.s === 'o') {                 // Grunderwerbsteuer automatisch setzen
+      o.grest = BUNDESLAENDER[v][1];
+      const feld = $('#view-eingabe [data-k="grest"]'); if (feld) feld.value = o.grest;
+    }
+    this.speichern();
+    if (this.tab === 'eingabe') { this.aktualisiereKurz(); if (k === 'name') this.renderHeader(); }
+    else if (this.tab === 'finanz') {
+      if (k === 'kaufpreisLink' || k === 'modus') this.renderFinanz(); else this.renderFinanzErgebnis();
+    }
+  }
+
+  /* ---------- Bausteine ---------- */
+  feld(f, wert, scope, ctx) {
+    const attr = `data-k="${f.k}" data-s="${scope}"${f.opt ? ' data-opt="1"' : ''}${f.num ? ' data-num="1"' : ''}`;
+    const lab = f.l + (f.u ? ` <span class="u">(${f.u})</span>` : '');
+    const hint = f.h ? `<small>${f.h}</small>` : '';
+    const ro = (f.ro && f.ro(ctx)) ? ' readonly' : '';
+    let inp;
+    if (f.t === 'checkbox') return `<label class="chk ${f.voll ? 'voll' : ''}"><input type="checkbox" ${attr}${wert ? ' checked' : ''}> ${f.l}</label>`;
+    if (f.t === 'select') inp = `<select ${attr}>${f.o.map(([v, t]) => `<option value="${v}"${String(v) === String(wert) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+    else if (f.t === 'textarea') inp = `<textarea rows="3" ${attr}>${esc(wert)}</textarea>`;
+    else if (f.t === 'number') inp = `<input type="number" step="${f.step || 'any'}" inputmode="decimal" ${attr} value="${wert ?? ''}"${ro}>`;
+    else if (f.t === 'month') inp = `<input type="month" ${attr} value="${esc(wert)}">`;
+    else inp = `<input type="text" ${attr} value="${esc(wert)}">`;
+    return `<div class="fld ${f.voll ? 'voll' : ''}"><label>${lab}${inp}</label>${hint}</div>`;
+  }
+  formular(defs, daten, scope) {
+    return defs.map(g => {
+      const felder = g.felder.filter(f => !f.zeige || f.zeige(daten));
+      return `<details class="card" open><summary>${g.gruppe}</summary><div class="fields">${felder.map(f => this.feld(f, daten[f.k], scope, daten)).join('')}</div></details>`;
+    }).join('');
+  }
+  kpi(l, v, cls = '', s = '') { return `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`; }
+  kopf(o) { return `<div class="sub" style="margin:0 2px 8px">${esc(o.name)}${o.ort ? ' · ' + esc(o.ort) : ''}</div>`; }
+  leer(text) {
+    return `<div class="card"><p>${text}</p><button class="btn primary" data-action="neu">+ Neues Objekt</button></div>`;
+  }
+
+  /* ---------- Tab: Objekte ---------- */
+  renderObjekte() {
+    const box = $('#view-objekte');
+    if (!this.s.objekte.length) { box.innerHTML = this.leer('Noch kein Objekt vorhanden.'); return; }
+    const liste = this.s.objekte.map(o => ({o, a:Bewertung.analyse(o)}));
+    const sortierer = {
+      score: (x, y) => (y.a.score ? y.a.score.wert : -1) - (x.a.score ? x.a.score.wert : -1),
+      rendite: (x, y) => (y.a.k.bruttoRendite ?? -1) - (x.a.k.bruttoRendite ?? -1),
+      preis: (x, y) => (x.o.kaufpreis || 1e15) - (y.o.kaufpreis || 1e15)
+    };
+    liste.sort(sortierer[this.s.sort] || sortierer.score);
+    box.innerHTML = `
+      <div class="card row">
+        <button class="btn primary" data-action="neu">+ Neues Objekt</button>
+        <select id="sort" style="width:auto;margin:0">
+          ${[['score','Sortierung: Bewertung'],['rendite','Sortierung: Bruttorendite'],['preis','Sortierung: Kaufpreis']]
+            .map(([v, t]) => `<option value="${v}"${this.s.sort === v ? ' selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>` + liste.map(({o, a}) => `
+      <div class="card obj" data-id="${o.id}">
+        ${a.score ? `<span class="badge ${a.score.cls}">${a.score.wert}</span>` : ''}
+        <div class="t">${esc(o.name)}</div>
+        <div class="sub">${esc(o.ort || '–')} · ${esc(o.art)} · ${Fmt.num(o.wohnflaeche, 0)} m² · Energie ${esc(o.energieklasse)}</div>
+        <div class="chips">
+          <span class="chip">Kaufpreis ${Fmt.eur(o.kaufpreis)}</span>
+          <span class="chip">Brutto ${Fmt.pct(a.k.bruttoRendite)}</span>
+          <span class="chip">Netto ${Fmt.pct(a.k.nettoRendite)}</span>
+          <span class="chip">Faktor ${Fmt.num(a.k.faktor)}</span>
+          ${a.cf && a.fin.darlehen > 0 ? `<span class="chip">Cashflow ${Fmt.eur(a.cf.proMonat)}/Mon.</span>` : ''}
+        </div>
+        <div class="row">
+          <button class="btn" data-action="edit" data-id="${o.id}">Bearbeiten</button>
+          <button class="btn" data-action="dup" data-id="${o.id}">Duplizieren</button>
+          <button class="btn danger" data-action="del" data-id="${o.id}">Löschen</button>
+        </div>
+      </div>`).join('');
+  }
+
+  /* ---------- Tab: Eingabe ---------- */
+  renderEingabe() {
+    const o = this.aktiv(), box = $('#view-eingabe');
+    if (!o) { box.innerHTML = this.leer('Lege zuerst ein Objekt an.'); return; }
+    box.innerHTML = `<div class="card" id="kurz"></div>` + this.formular(FELDER_OBJEKT, o, 'o');
+    this.aktualisiereKurz();
+  }
+  aktualisiereKurz() {
+    const o = this.aktiv(), a = Bewertung.analyse(o), k = a.k;
+    $('#kurz').innerHTML = `<div class="chips" style="margin:0">
+      <span class="chip">Brutto ${Fmt.pct(k.bruttoRendite)}</span><span class="chip">Netto ${Fmt.pct(k.nettoRendite)}</span>
+      <span class="chip">Faktor ${Fmt.num(k.faktor)}</span><span class="chip">Nebenkosten ${Fmt.eur(k.nk.summe)}</span>
+      <span class="chip">Gesamt ${Fmt.eur(k.gesamt)}</span>${a.score ? `<span class="chip">Score ${a.score.wert}</span>` : ''}</div>`;
+  }
+
+  /* ---------- Tab: Analyse ---------- */
+  renderAnalyse() {
+    const o = this.aktiv(), box = $('#view-analyse');
+    if (!o) { box.innerHTML = this.leer('Lege zuerst ein Objekt an.'); return; }
+    const a = Bewertung.analyse(o), k = a.k, cf = a.cf, fin = a.fin, sc = a.score;
+    const hatDarlehen = fin && fin.darlehen > 0;
+    const score = sc ? `
+      <div class="card"><div class="scorebox">
+        <div><div class="score ${sc.cls}">${sc.wert}</div><div class="sub" style="text-align:center">${sc.urteil}</div></div>
+        <div class="bars">${sc.teile.map(t => `<div class="bar">${t.n}<i style="width:${Math.round(t.v * 100)}%"></i></div>`).join('')}</div>
+      </div><small class="fine">Gewichteter Score aus Rendite, Kaufpreisfaktor, Lage, Zustand, Energieklasse${hatDarlehen ? ' und Cashflow' : ''}. Kein Ersatz für eine Besichtigung und Prüfung der Unterlagen.</small></div>`
+      : `<div class="card">Gib Kaufpreis und Miete ein, um Rendite und Bewertung zu sehen.</div>`;
+    const kpis1 = this.kpi('Bruttomietrendite', Fmt.pct(k.bruttoRendite), ampel(k.bruttoRendite, 5, 3.5), 'Jahreskaltmiete / Kaufpreis')
+      + this.kpi('Nettomietrendite', Fmt.pct(k.nettoRendite), ampel(k.nettoRendite, 3.5, 2.5), 'nach Kosten, inkl. Nebenkosten')
+      + this.kpi('Kaufpreisfaktor', Fmt.num(k.faktor), ampel(k.faktor, 20, 27, false), 'Kaufpreis / Jahreskaltmiete')
+      + this.kpi('Gesamtinvestition', Fmt.eur(k.gesamt), '', 'inkl. Nebenkosten und Sanierung');
+    const kpis2 = this.kpi('Kaufpreis pro m²', Fmt.eur(k.kpQm), '', k.vsMarkt != null ? Fmt.num(k.vsMarkt, 0) + ' % zum Markt' : '')
+      + this.kpi('Miete pro m²', Fmt.eur(k.mieteQm, 2), '', k.vsMiete != null ? Fmt.num(k.vsMiete, 0) + ' % zur Vergleichsmiete' : '')
+      + this.kpi('Nettoertrag p. a.', Fmt.eur(k.noi), k.noi > 0 ? '' : 'bad', 'Miete − Bewirtschaftung')
+      + this.kpi('Bewirtschaftung p. a.', Fmt.eur(k.bewirt), '', 'inkl. Mietausfall')
+      + this.kpi('Nettokaufpreisfaktor', Fmt.num(k.nettoFaktor), '', 'Gesamtinvestition / Nettoertrag');
+    const kpis3 = (cf && hatDarlehen)
+      ? this.kpi('Cashflow / Monat', Fmt.eur(cf.proMonat), cf.vor >= 0 ? 'good' : 'bad', 'vor Steuern, nach Zins und Tilgung')
+        + this.kpi('Cashflow nach Steuern', Fmt.eur(cf.nachMonat), cf.nach >= 0 ? 'good' : 'warn', 'pro Monat, vereinfacht')
+        + this.kpi('Eigenkapitalrendite', Fmt.pct(cf.ekRendite), ampel(cf.ekRendite, 5, 2), '(Cashflow + Tilgung) / Eigenkapital')
+        + this.kpi('Schuldendienstdeckung', Fmt.num(cf.dscr, 2), ampel(cf.dscr, 1.2, 1), 'Nettoertrag / Zins + Tilgung')
+      : `<div class="kpi info" style="grid-column:1/-1"><div class="l">Cashflow und Eigenkapitalrendite</div><div class="s">Folgen, sobald im Tab „Finanzierung“ ein Darlehen berechnet wird.</div></div>`;
+    const nk = k.nk;
+    const kosten = `<div class="card"><h2>Kostenaufstellung</h2><table>
+      <tr><td>Kaufpreis</td><td>${Fmt.eur(k.kp)}</td></tr>
+      <tr><td>Grunderwerbsteuer (${Fmt.pct(o.grest)})</td><td>${Fmt.eur(nk.grest)}</td></tr>
+      <tr><td>Notar und Grundbuch (${Fmt.pct(o.notar)})</td><td>${Fmt.eur(nk.notar)}</td></tr>
+      <tr><td>Makler (${Fmt.pct(o.makler)})</td><td>${Fmt.eur(nk.makler)}</td></tr>
+      <tr><td>Sonstiges</td><td>${Fmt.eur(nk.sonst)}</td></tr>
+      <tr><td>Sanierung / Renovierung</td><td>${Fmt.eur(o.sanierung)}</td></tr>
+      <tr class="sum"><td>Gesamtinvestition (Nebenkosten ${Fmt.pct(k.kp > 0 ? nk.summe / k.kp * 100 : 0, 1)})</td><td>${Fmt.eur(k.gesamt)}</td></tr></table></div>`;
+    const preis = k.jkm > 0 ? `<div class="card"><h2>Preisverhandlung</h2><div class="scroll"><table>
+      <tr><th>Ziel-Bruttorendite</th><th>Kaufpreis</th><th>Differenz</th></tr>
+      ${[4, 5, 6].map(r => { const p = k.preisBeiRendite(r); return `<tr><td>${r} %</td><td>${Fmt.eur(p)}</td><td>${Fmt.eur(p - k.kp)}</td></tr>`; }).join('')}
+      </table></div><small class="fine">Kaufpreis, bei dem die Bruttomietrendite das Ziel erreicht.</small></div>` : '';
+    const steuer = (cf && hatDarlehen) ? `<div class="card"><h2>Steuerliche Schätzung (Jahr 1)</h2><table>
+      <tr><td>Nettoertrag</td><td>${Fmt.eur(k.noi)}</td></tr>
+      <tr><td>− Zinsen</td><td>${Fmt.eur(fin.zinsJ1)}</td></tr>
+      <tr><td>− AfA (Gebäude ${Fmt.pct(o.gebaeudeanteil, 0)}, ${Fmt.pct(o.afa, 1)})</td><td>${Fmt.eur(cf.afa)}</td></tr>
+      <tr class="sum"><td>Steuerliches Ergebnis</td><td>${Fmt.eur(cf.ergebnis)}</td></tr>
+      <tr><td>Steuerwirkung (${Fmt.pct(o.finanz.steuersatz, 0)})</td><td>${Fmt.eur(cf.steuerwirkung)}</td></tr></table>
+      <small class="fine">Stark vereinfacht (Erhaltungsaufwand und Rücklagen werden als Kosten angesetzt). Bitte mit Steuerberater prüfen.</small></div>` : '';
+    const hinweise = `<div class="card"><h2>Hinweise</h2>${a.hinweise.map(h => `<div class="note ${h.typ}">${h.text}</div>`).join('')}</div>`;
+    const erledigt = CHECKLISTE.filter((_, i) => o.check[i]).length;
+    const check = `<details class="card"><summary>Kauf-Checkliste (<span id="checkZaehler">${erledigt} / ${CHECKLISTE.length} erledigt</span>)</summary>
+      ${CHECKLISTE.map((t, i) => `<label class="chk"><input type="checkbox" data-check="${i}"${o.check[i] ? ' checked' : ''}> ${t}</label>`).join('')}</details>`;
+    box.innerHTML = this.kopf(o) + score + `<div class="kpis">${kpis1}</div><div class="kpis">${kpis2}</div><div class="kpis">${kpis3}</div>`
+      + kosten + preis + steuer + hinweise + check
+      + `<small class="fine">Modellrechnung ohne Gewähr, keine Anlage-, Steuer- oder Rechtsberatung.</small>`;
+  }
+
+  /* ---------- Tab: Finanzierung ---------- */
+  renderFinanz() {
+    const o = this.aktiv(), box = $('#view-finanz');
+    if (!o) { box.innerHTML = this.leer('Lege zuerst ein Objekt an.'); return; }
+    Finanzierung.sync(o);
+    box.innerHTML = this.kopf(o) + this.formular(FELDER_FINANZ, o.finanz, 'f') + '<div id="finErg"></div>';
+    this.renderFinanzErgebnis();
+  }
+  renderFinanzErgebnis() {
+    const o = this.aktiv(), box = $('#finErg');
+    const a = Bewertung.analyse(o), fin = a.fin, cf = a.cf, f = o.finanz;
+    if (!fin) { box.innerHTML = '<div class="card">Bitte zuerst einen Kaufpreis eingeben (Tab „Eingabe“).</div>'; return; }
+    const p = fin.plan;
+    const hinweise = a.hinweise.filter(h => /Beleihungsauslauf|Rate|Anfangstilgung|Zinsbindung|Darlehenszins|Cashflow|Schuldendienst/.test(h.text));
+    const vorschlag = Math.round(fin.nk.summe + 0.2 * fin.kaufpreis);
+    const kpis = this.kpi('Darlehen', Fmt.eur(fin.darlehen), '', `Beleihungsauslauf ${Fmt.num(fin.ltv, 0)} %`)
+      + this.kpi('Eigenkapital', Fmt.eur(fin.ek), '', `${Fmt.num(fin.ekQuote, 0)} % des Gesamtbedarfs`)
+      + this.kpi('Monatliche Rate', Fmt.eur(fin.rate1, 2), '', `anfängl. Tilgung ${Fmt.pct(fin.tilgungStart)}`)
+      + this.kpi('Schuldenfrei nach', p.laufzeitText(), p.getilgt ? 'good' : 'bad', p.getilgt ? 'bis ' + p.datumEnde(f.start) : 'Rate erhöhen')
+      + this.kpi('Zinsen gesamt', Fmt.eur(p.gesamtZinsen), '', `Gesamtzahlung ${Fmt.eur(p.gesamtZinsen + p.gesamtTilgung + p.gesamtSonder)}`)
+      + this.kpi('Restschuld nach Bindung', Fmt.eur(p.restNachBindung), '', `nach ${f.bindung} Jahren`)
+      + (cf ? this.kpi('Cashflow / Monat', Fmt.eur(cf.proMonat), cf.vor >= 0 ? 'good' : 'bad', 'vor Steuern')
+            + this.kpi('Cashflow nach Steuern', Fmt.eur(cf.nachMonat), cf.nach >= 0 ? 'good' : 'warn', 'vereinfacht')
+            + this.kpi('Eigenkapitalrendite', Fmt.pct(cf.ekRendite), ampel(cf.ekRendite, 5, 2), 'Jahr 1') : '');
+    const szen = Finanzierung.szenarien(fin).map(s => `<tr class="${s.d === 0 ? 'base' : ''}">
+        <td>${Fmt.pct(s.zins2)}${s.d === 0 ? ' (Annahme)' : ''}</td><td>${s.plan.laufzeitText()}</td><td>${Fmt.eur(s.plan.gesamtZinsen)}</td>
+        <td>${s.d === 0 ? '–' : (s.plan.gesamtZinsen - p.gesamtZinsen >= 0 ? '+' : '') + Fmt.eur(s.plan.gesamtZinsen - p.gesamtZinsen)}</td></tr>`).join('');
+    const jahre = p.jahre.map(j => `<tr><td>${j.jahr}</td><td>${Fmt.eur(j.zinsen)}</td><td>${Fmt.eur(j.tilgung)}</td><td>${Fmt.eur(j.sonder)}</td><td>${Fmt.eur(j.rest)}</td></tr>`).join('');
+    box.innerHTML = `
+      <div class="card"><h2>Ergebnis</h2>
+        <p class="sub">Gesamtbedarf ${Fmt.eur(fin.bedarf)} (Kaufpreis ${Fmt.eur(fin.kaufpreis)} + Nebenkosten ${Fmt.eur(fin.nk.summe)} + Sanierung ${Fmt.eur(o.sanierung)})</p>
+        <button class="btn" data-action="ek-vorschlag">Eigenkapital-Vorschlag: ${Fmt.eur(vorschlag)} (Nebenkosten + 20 %)</button></div>
+      <div class="kpis">${kpis}</div>
+      ${hinweise.map(h => `<div class="note ${h.typ}">${h.text}</div>`).join('')}
+      <div class="card"><h2>Restschuld, Immobilienwert und Nettovermögen</h2><div class="chartbox"><canvas id="chRest"></canvas></div>
+        <h2>Zins- und Tilgungsanteil je Jahr</h2><div class="chartbox"><canvas id="chZT"></canvas></div></div>
+      <div class="card"><h2>Szenario: Anschlusszins</h2><div class="scroll"><table>
+        <tr><th>Zins nach Bindung</th><th>Schuldenfrei nach</th><th>Zinsen gesamt</th><th>Differenz</th></tr>${szen}</table></div>
+        <small class="fine">Gleiche Rate wie angegeben; nach Ablauf der Zinsbindung gilt der jeweilige Zinssatz.</small></div>
+      <details class="card"><summary>Tilgungsplan je Jahr</summary><div class="scroll"><table>
+        <tr><th>Jahr</th><th>Zinsen</th><th>Tilgung</th><th>Sondertilg.</th><th>Restschuld</th></tr>${jahre}</table></div>
+        <small class="fine">Monatliche Berechnung mit Zins/12, Sondertilgung zum Jahresende. Bankangebote können leicht abweichen.</small></details>`;
+    if (fin.darlehen > 0) { this.diagramme.restschuld('chRest', fin, o); this.diagramme.zinsTilgung('chZT', fin); }
+  }
+
+  /* ---------- Tab: Backup ---------- */
+  renderBackup() {
+    $('#view-backup').innerHTML = `
+      <div class="card"><h2>Daten sichern und übertragen</h2>
+        <p>Die Daten liegen nur auf diesem Gerät (Browser). Um sie zwischen Computer und iPhone zu übertragen, exportiere eine Datei und importiere sie auf dem anderen Gerät.</p>
+        <div class="row"><button class="btn primary" data-action="export">Alle Objekte exportieren</button>
+        <button class="btn" data-action="import">Datei importieren</button></div>
+        <input type="file" id="importDatei" accept="application/json,.json" style="display:none">
+        <p class="sub">Beim Import werden Objekte mit gleicher Kennung ersetzt, neue werden ergänzt.</p></div>
+      <div class="card"><h2>Zurücksetzen</h2><button class="btn danger" data-action="alles-loeschen">Alle Objekte auf diesem Gerät löschen</button></div>`;
+  }
+  exportieren() {
+    const text = JSON.stringify({version:1, objekte:this.s.objekte}, null, 2);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], {type:'application/json'}));
+    a.download = 'immobilien-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  importieren(datei) {
+    if (!datei) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        if (!d || !Array.isArray(d.objekte)) throw new Error('Format');
+        d.objekte.map(Immobilie.normalisiere).forEach(n => {
+          const i = this.s.objekte.findIndex(x => x.id === n.id);
+          if (i >= 0) this.s.objekte[i] = n; else this.s.objekte.push(n);
+        });
+        if (!this.aktiv()) this.s.aktivId = this.s.objekte[0].id;
+        this.speichern(); alert(d.objekte.length + ' Objekt(e) importiert.'); this.setTab('objekte');
+      } catch (e) { alert('Die Datei konnte nicht gelesen werden.'); }
+    };
+    r.readAsText(datei);
+  }
+}
+
+const $ = (s, r = document) => r.querySelector(s);
+window.addEventListener('DOMContentLoaded', () => { window.app = new App(); });
+</script>
+</body>
+</html>
