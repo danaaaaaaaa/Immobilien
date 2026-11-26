@@ -16,7 +16,7 @@
   "profile": [
     {
       "name": "Köln Eigentumswohnung bis 300 T€",
-      "aktiv": false,
+      "aktiv": true,
       "url": "https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/koeln/wohnung-kaufen?sorting=2&price=-300000",
       "bundesland": "NW",
       "mieteQm": 12.5,
