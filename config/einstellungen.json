@@ -7,7 +7,7 @@
     "minScore": 50,
     "pushScore": 65,
     "minBrutto": null,
-    "maxPreis": null,
+    "maxPreis": 350000,
     "minFlaeche": null,
     "maxFlaeche": null,
     "minZimmer": null,
