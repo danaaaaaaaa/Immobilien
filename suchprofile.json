@@ -1,0 +1,19 @@
+{
+  "_hinweis": "Pro Stadt/Region ein Profil. url: Suche auf immobilienscout24.de mit Filtern einstellen, Sortierung 'Neueste zuerst' wählen und die Adresse aus der Browserzeile hier einfügen. Ein Profil läuft erst bei aktiv: true.",
+  "minScore": 50,
+  "pushScore": 65,
+  "maxNeuProLauf": 10,
+  "maxPushProLauf": 3,
+  "profile": [
+    {
+      "name": "Köln Eigentumswohnung bis 300 T€",
+      "aktiv": false,
+      "url": "https://www.immobilienscout24.de/Suche/de/nordrhein-westfalen/koeln/wohnung-kaufen?sorting=2&price=-300000",
+      "bundesland": "NW",
+      "mieteQm": 12.5,
+      "marktQm": 3600,
+      "ekProzent": 20,
+      "zins": 3.8
+    }
+  ]
+}

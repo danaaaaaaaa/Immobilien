@@ -24,9 +24,12 @@
   main{max-width:980px;margin:0 auto;padding:12px 12px 100px}
   nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;background:var(--card);border-top:1px solid var(--line);
       padding-bottom:env(safe-area-inset-bottom)}
-  nav button{flex:1;padding:13px 2px;border:0;background:none;color:var(--muted);font-size:12px;font-weight:600}
+  nav button{flex:1;padding:13px 2px;border:0;background:none;color:var(--muted);font-size:11px;font-weight:600}
   nav button.on{color:var(--accent);box-shadow:inset 0 3px 0 var(--accent)}
   .view{display:none}.view.on{display:block}
+  .leiste{position:sticky;top:54px;z-index:4;display:none;gap:8px;align-items:center;justify-content:space-between;
+          background:var(--card);border:1px solid var(--warn);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+  .leiste.on{display:flex}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
   details.card>summary{font-weight:700;cursor:pointer;margin:-2px 0 0}
   details.card[open]>summary{margin-bottom:12px}
@@ -81,333 +84,21 @@
   <section id="view-eingabe" class="view"></section>
   <section id="view-analyse" class="view"></section>
   <section id="view-finanz" class="view"></section>
+  <section id="view-suche" class="view"></section>
   <section id="view-backup" class="view"></section>
 </main>
 <nav>
   <button data-tab="objekte">Objekte</button>
   <button data-tab="eingabe">Eingabe</button>
   <button data-tab="analyse">Analyse</button>
-  <button data-tab="finanz">Finanzierung</button>
+  <button data-tab="finanz">Finanzen</button>
+  <button data-tab="suche">Suche</button>
   <button data-tab="backup">Backup</button>
 </nav>
 
+<script src="logik.js"></script>
 <script>
 'use strict';
-
-/* =====================================================================
-   KONSTANTEN
-   ===================================================================== */
-const SPEICHER_KEY = 'immoAnalyse.v1';
-
-// Grunderwerbsteuer je Bundesland (Stand 2026, bitte vor Kauf prüfen) – im Formular überschreibbar
-const BUNDESLAENDER = {
-  BW:['Baden-Württemberg',5.0], BY:['Bayern',3.5], BE:['Berlin',6.0], BB:['Brandenburg',6.5],
-  HB:['Bremen',5.5], HH:['Hamburg',5.5], HE:['Hessen',6.0], MV:['Mecklenburg-Vorpommern',6.0],
-  NI:['Niedersachsen',5.0], NW:['Nordrhein-Westfalen',6.5], RP:['Rheinland-Pfalz',5.0], SL:['Saarland',6.5],
-  SN:['Sachsen',3.5], ST:['Sachsen-Anhalt',5.0], SH:['Schleswig-Holstein',6.5], TH:['Thüringen',5.0]
-};
-const ENERGIEKLASSEN = ['A+','A','B','C','D','E','F','G','H'];
-// Bewertungswert je Energieklasse (1 = beste, 0 = schlechteste) für den Score
-const ENERGIE_WERT = {'A+':1, A:.93, B:.82, C:.7, D:.55, E:.4, F:.25, G:.12, H:0};
-
-const CHECKLISTE = [
-  'Energieausweis (Klasse, Gültigkeit) liegt vor',
-  'Grundbuchauszug geprüft (Lasten, Wegerechte, Wohnrecht)',
-  'Teilungserklärung und Gemeinschaftsordnung gelesen',
-  'Protokolle der Eigentümerversammlungen (letzte 3 Jahre) geprüft',
-  'Wirtschaftsplan und letzte Hausgeldabrechnung geprüft',
-  'Höhe der Instandhaltungsrücklage erfragt',
-  'Beschlossene / geplante Sonderumlagen geklärt',
-  'Mietvertrag, Mietzahlungen und Kaution geprüft',
-  'Vergleichsmiete / Mietspiegel recherchiert',
-  'Besichtigung: Dach, Fassade, Keller, Feuchtigkeit',
-  'Alter von Heizung, Fenstern, Elektrik, Leitungen geklärt',
-  'Anstehende Sanierungen und Kosten eingeschätzt',
-  'Baulasten, Altlasten, Erschließung geklärt',
-  'Finanzierungsangebote mehrerer Banken eingeholt',
-  'Notarvertragsentwurf mind. 14 Tage vor Termin erhalten'
-];
-
-/* =====================================================================
-   HILFSFUNKTIONEN
-   ===================================================================== */
-const Fmt = {
-  eur: (v, d = 0) => (v == null || isNaN(v)) ? '–' :
-       new Intl.NumberFormat('de-DE', {style:'currency', currency:'EUR', minimumFractionDigits:d, maximumFractionDigits:d}).format(v),
-  num: (v, d = 1) => (v == null || isNaN(v)) ? '–' :
-       new Intl.NumberFormat('de-DE', {minimumFractionDigits:d, maximumFractionDigits:d}).format(v),
-  pct: (v, d = 2) => (v == null || isNaN(v)) ? '–' : Fmt.num(v, d) + ' %',
-  kurz: v => Math.abs(v) >= 1e6 ? Fmt.num(v / 1e6, 1) + ' Mio' : Math.round(v / 1000) + ' T€'
-};
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-// Ampelfarbe: hoeherBesser=true -> ab "gruen" grün, ab "gelb" gelb, sonst rot
-const ampel = (v, gruen, gelb, hoeherBesser = true) => {
-  if (v == null) return '';
-  if (hoeherBesser) return v >= gruen ? 'good' : v >= gelb ? 'warn' : 'bad';
-  return v <= gruen ? 'good' : v <= gelb ? 'warn' : 'bad';
-};
-const neueId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id' + Date.now() + Math.random().toString(16).slice(2);
-
-/* =====================================================================
-   MODELL: Immobilie
-   ===================================================================== */
-class Immobilie {
-  static startStandard() {            // Standard-Starttermin der Finanzierung: nächster Monat
-    const d = new Date(); d.setMonth(d.getMonth() + 1);
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
-  }
-  static standardFinanz() {
-    return {kaufpreisLink:true, kaufpreis:0, eigenkapital:0, modus:'tilgung', rate:0, tilgung:2,
-            zins1:3.8, bindung:10, zins2:4.5, rateNach:null, sonder:0, start:Immobilie.startStandard(), steuersatz:35};
-  }
-  static standard() {
-    return {id:'', name:'Neues Objekt', ort:'', bundesland:'NW', art:'Eigentumswohnung', baujahr:null, wohnflaeche:0,
-            zimmer:null, grundstueck:null, etage:'', lageMakro:3, lageMikro:3, zustand:3,
-            energieklasse:'D', heizung:'Gas', energiekennwert:null,
-            kaufpreis:0, sanierung:0, grest:BUNDESLAENDER.NW[1], notar:1.8, makler:3.57, sonstigeNK:0,
-            kaltmiete:0, mietausfall:2, vergleichsmiete:null,
-            nichtUml:0, instandhaltung:10, marktpreis:null, wertsteigerung:1.5, gebaeudeanteil:75, afa:2,
-            notizen:'', check:{}, finanz:Immobilie.standardFinanz()};
-  }
-  // Fehlende Felder mit Standardwerten auffüllen (z. B. nach Import oder App-Update)
-  static normalisiere(roh) {
-    const s = Immobilie.standard();
-    const o = Object.assign(s, roh || {});
-    o.finanz = Object.assign(Immobilie.standardFinanz(), (roh && roh.finanz) || {});
-    o.check = (roh && roh.check) || {};
-    if (!o.id) o.id = neueId();
-    return o;
-  }
-  static neu() { return Immobilie.normalisiere({id:neueId()}); }
-  static beispiel() {
-    return Immobilie.normalisiere({
-      id:neueId(), name:'Beispiel-Wohnung (bitte löschen)', ort:'Musterstadt, Zentrum', bundesland:'NW', baujahr:1998,
-      wohnflaeche:65, zimmer:3, lageMakro:3, lageMikro:4, zustand:4, energieklasse:'C', heizung:'Fernwärme',
-      kaufpreis:220000, grest:6.5, kaltmiete:780, nichtUml:45, instandhaltung:10, marktpreis:3300, vergleichsmiete:12,
-      finanz:{eigenkapital:45000, modus:'rate', rate:950, zins1:3.8, bindung:10, zins2:4.5}
-    });
-  }
-}
-
-/* =====================================================================
-   RECHENKERN: Kennzahlen
-   ===================================================================== */
-class Rechner {
-  // Kaufnebenkosten (optional mit abweichendem Kaufpreis)
-  static nebenkosten(o, kp = o.kaufpreis) {
-    kp = kp || 0;
-    const grest = kp * (o.grest || 0) / 100, notar = kp * (o.notar || 0) / 100;
-    const makler = kp * (o.makler || 0) / 100, sonst = o.sonstigeNK || 0;
-    return {grest, notar, makler, sonst, summe: grest + notar + makler + sonst};
-  }
-  static kennzahlen(o) {
-    const kp = o.kaufpreis || 0, wf = o.wohnflaeche || 0;
-    const nk = Rechner.nebenkosten(o);
-    const gesamt = kp + nk.summe + (o.sanierung || 0);
-    const jkm = (o.kaltmiete || 0) * 12;
-    const mietausfall = jkm * (o.mietausfall || 0) / 100;
-    const bewirtOhneAusfall = (o.nichtUml || 0) * 12 + (o.instandhaltung || 0) * wf;
-    const bewirt = bewirtOhneAusfall + mietausfall;
-    const noi = jkm - bewirt;
-    const kpQm = wf > 0 ? kp / wf : null, mieteQm = wf > 0 ? (o.kaltmiete || 0) / wf : null;
-    return {
-      kp, wf, nk, gesamt, jkm, mietausfall, bewirt, bewirtOhneAusfall, noi,
-      bruttoRendite: (kp > 0 && jkm > 0) ? jkm / kp * 100 : null,
-      nettoRendite:  (gesamt > 0 && jkm > 0) ? noi / gesamt * 100 : null,
-      faktor:        jkm > 0 ? kp / jkm : null,
-      nettoFaktor:   noi > 0 ? gesamt / noi : null,
-      kpQm, gesamtQm: wf > 0 ? gesamt / wf : null, mieteQm,
-      vsMarkt:  (o.marktpreis && kpQm) ? (kpQm / o.marktpreis - 1) * 100 : null,
-      vsMiete:  (o.vergleichsmiete && mieteQm) ? (mieteQm / o.vergleichsmiete - 1) * 100 : null,
-      preisBeiRendite: r => jkm > 0 ? jkm / (r / 100) : null     // Kaufpreis, der eine Ziel-Bruttorendite ergibt
-    };
-  }
-}
-
-/* =====================================================================
-   RECHENKERN: Tilgungsplan (monatliche Berechnung)
-   Zins/12 pro Monat, Sondertilgung jeweils zum Jahresende.
-   ===================================================================== */
-class Tilgungsplan {
-  constructor(p) { this.p = p; this.berechne(); }
-  berechne() {
-    const {darlehen, zins1, zins2, bindung, rate1, rate2, sonder = 0, maxMonate = 720} = this.p;
-    const bindM = Math.round((bindung || 0) * 12);
-    let rest = darlehen, monat = 0, restNachBindung = null;
-    let gZins = 0, gTilg = 0, gSonder = 0, jz = 0, jt = 0, js = 0;
-    const jahre = [];
-    while (rest > 0.005 && monat < maxMonate) {
-      monat++;
-      const inBindung = monat <= bindM;
-      const zinsen = rest * (inBindung ? zins1 : zins2) / 1200;
-      let zahlung = inBindung ? rate1 : rate2;
-      if (zahlung > rest + zinsen) zahlung = rest + zinsen;      // letzte Rate
-      const tilg = zahlung - zinsen;
-      rest -= tilg; jz += zinsen; jt += tilg; gZins += zinsen; gTilg += tilg;
-      if (monat % 12 === 0 && sonder > 0 && rest > 0.005) {       // Sondertilgung zum Jahresende
-        const s = Math.min(sonder, rest); rest -= s; js += s; gSonder += s;
-      }
-      if (monat === bindM) restNachBindung = rest;
-      if (monat % 12 === 0 || rest <= 0.005) {
-        jahre.push({jahr: Math.ceil(monat / 12), zinsen: jz, tilgung: jt, sonder: js, rest: Math.max(rest, 0)});
-        jz = jt = js = 0;
-      }
-    }
-    this.monate = monat;
-    this.getilgt = rest <= 0.005;
-    this.gesamtZinsen = gZins; this.gesamtTilgung = gTilg; this.gesamtSonder = gSonder;
-    this.restEnde = Math.max(rest, 0);
-    this.restNachBindung = restNachBindung === null ? (monat < bindM ? 0 : rest) : restNachBindung;
-    this.jahre = jahre;
-  }
-  // Monat der letzten Rate als Text, z. B. "März 2051"
-  datumEnde(startStr) {
-    const [y, m] = (startStr || Immobilie.startStandard()).split('-').map(Number);
-    return new Date(y, m - 1 + Math.max(this.monate - 1, 0), 1).toLocaleDateString('de-DE', {month:'long', year:'numeric'});
-  }
-  laufzeitText() {
-    if (!this.getilgt) return 'nicht in 60 Jahren';
-    const j = Math.floor(this.monate / 12), m = this.monate % 12;
-    return j + ' J.' + (m ? ' ' + m + ' M.' : '');
-  }
-}
-
-/* =====================================================================
-   RECHENKERN: Finanzierung und Cashflow
-   ===================================================================== */
-class Finanzierung {
-  // Kaufpreis aus dem Objekt übernehmen, solange die Verknüpfung aktiv ist
-  static sync(o) { if (o.finanz.kaufpreisLink) o.finanz.kaufpreis = o.kaufpreis; }
-
-  static berechne(o) {
-    const f = o.finanz, kp = f.kaufpreis || 0;
-    if (kp <= 0) return null;
-    const nk = Rechner.nebenkosten(o, kp);
-    const bedarf = kp + nk.summe + (o.sanierung || 0);
-    const ek = f.eigenkapital || 0;
-    const darlehen = Math.max(0, bedarf - ek);
-    const rate1 = f.modus === 'rate' ? (f.rate || 0) : darlehen * ((f.zins1 || 0) + (f.tilgung || 0)) / 1200;
-    const rate2 = f.rateNach > 0 ? f.rateNach : rate1;
-    const plan = new Tilgungsplan({darlehen, zins1:f.zins1 || 0, zins2:f.zins2 || 0, bindung:f.bindung || 0,
-                                   rate1, rate2, sonder:f.sonder || 0});
-    const j1 = plan.jahre[0] || {zinsen:0, tilgung:0};
-    return {
-      kaufpreis:kp, nk, bedarf, ek, darlehen, rate1, rate2, plan,
-      ltv: darlehen / kp * 100, ekQuote: bedarf > 0 ? ek / bedarf * 100 : 0,
-      tilgungStart: darlehen > 0 ? (rate1 * 12 - darlehen * (f.zins1 || 0) / 100) / darlehen * 100 : 0,
-      zinsJ1: j1.zinsen, tilgJ1: j1.tilgung, zahlungJ1: j1.zinsen + j1.tilgung
-    };
-  }
-
-  // Cashflow vor/nach Steuern (Jahr 1, vereinfacht)
-  static cashflow(o, k, fin) {
-    if (!fin || k.jkm <= 0) return null;
-    const vor = k.noi - fin.zahlungJ1;
-    const afa = (fin.kaufpreis + fin.nk.summe) * (o.gebaeudeanteil || 0) / 100 * (o.afa || 0) / 100;
-    const ergebnis = k.noi - fin.zinsJ1 - afa;                         // steuerliches Ergebnis aus Vermietung
-    const steuerwirkung = -ergebnis * (o.finanz.steuersatz || 0) / 100; // + = Erstattung, - = Steuerzahlung
-    return {
-      vor, proMonat: vor / 12, nach: vor + steuerwirkung, nachMonat: (vor + steuerwirkung) / 12,
-      afa, ergebnis, steuerwirkung, quote: vor / k.jkm * 100,
-      ekRendite: fin.ek > 0 ? (vor + fin.tilgJ1) / fin.ek * 100 : null,
-      dscr: fin.zahlungJ1 > 0 ? k.noi / fin.zahlungJ1 : null
-    };
-  }
-
-  // Szenarien: wie wirkt sich ein anderer Anschlusszins aus?
-  static szenarien(fin) {
-    return [-1, 0, 1, 2, 3].map(d => {
-      const zins2 = Math.max(0, fin.plan.p.zins2 + d);
-      return {d, zins2, plan: new Tilgungsplan(Object.assign({}, fin.plan.p, {zins2}))};
-    });
-  }
-}
-
-/* =====================================================================
-   BEWERTUNG: Score, Hinweise
-   ===================================================================== */
-class Bewertung {
-  static analyse(o) {
-    Finanzierung.sync(o);
-    const k = Rechner.kennzahlen(o);
-    const fin = Finanzierung.berechne(o);
-    const cf = Finanzierung.cashflow(o, k, fin);
-    const score = Bewertung.score(o, k, (fin && fin.darlehen > 0) ? cf : null);
-    return {k, fin, cf, score, hinweise: Bewertung.hinweise(o, k, fin, cf)};
-  }
-
-  // Gewichteter Score 0–100 (nur wenn Kaufpreis und Miete vorhanden)
-  static score(o, k, cf) {
-    if (!(k.kp > 0 && k.jkm > 0)) return null;
-    const lin = (x, a, b) => Math.max(0, Math.min(1, (x - a) / (b - a)));
-    const teile = [
-      {n:'Bruttomietrendite', w:20, v:lin(k.bruttoRendite, 2, 6)},
-      {n:'Nettomietrendite',  w:20, v:lin(k.nettoRendite, 1.5, 4)},
-      {n:'Kaufpreisfaktor',   w:10, v:lin(k.faktor, 30, 15)},
-      {n:'Lage',              w:15, v:((o.lageMakro + o.lageMikro) / 2 - 1) / 4},
-      {n:'Zustand',           w:10, v:(o.zustand - 1) / 4},
-      {n:'Energieklasse',     w:10, v:ENERGIE_WERT[o.energieklasse] ?? .5}
-    ];
-    if (cf) teile.push({n:'Cashflow', w:15, v:lin(cf.quote, -30, 10)});
-    const wSum = teile.reduce((a, t) => a + t.w, 0);
-    const wert = Math.round(teile.reduce((a, t) => a + t.w * t.v, 0) / wSum * 100);
-    const urteil = wert >= 70 ? 'Attraktiv' : wert >= 55 ? 'Solide' : wert >= 40 ? 'Genau prüfen' : 'Kritisch';
-    return {wert, urteil, teile, cls: wert >= 70 ? 'good' : wert >= 45 ? 'warn' : 'bad'};
-  }
-
-  static hinweise(o, k, fin, cf) {
-    const h = [], add = (typ, text) => h.push({typ, text});
-    if (['F','G','H'].includes(o.energieklasse))
-      add('warn', `Energieklasse ${o.energieklasse}: hoher Energiebedarf, Sanierungspflichten (GEG) und Wertabschläge möglich – Sanierungskosten einplanen.`);
-    else if (['A+','A','B'].includes(o.energieklasse))
-      add('ok', `Energieklasse ${o.energieklasse}: gute Energieeffizienz, geringeres Sanierungsrisiko.`);
-    if (o.baujahr && o.baujahr < 1978)
-      add('info', 'Baujahr vor 1978 (vor der ersten Wärmeschutzverordnung): Dämmung, Heizung, Leitungen und Elektrik besonders prüfen.');
-    if (k.faktor != null) {
-      if (k.faktor > 27) add('warn', `Kaufpreisfaktor ${Fmt.num(k.faktor)}: Kaufpreis im Verhältnis zur Miete hoch (günstig: unter 20).`);
-      else if (k.faktor <= 20) add('ok', `Kaufpreisfaktor ${Fmt.num(k.faktor)}: günstiges Verhältnis von Kaufpreis zu Miete.`);
-    }
-    if (k.vsMarkt != null) {
-      if (k.vsMarkt > 10) add('warn', `Kaufpreis/m² liegt ${Fmt.num(k.vsMarkt, 0)} % über dem Marktpreis – Verhandlungsspielraum prüfen.`);
-      else if (k.vsMarkt < -5) add('ok', `Kaufpreis/m² liegt ${Fmt.num(-k.vsMarkt, 0)} % unter dem Marktpreis.`);
-    }
-    if (k.vsMiete != null) {
-      if (k.vsMiete > 10) add('warn', `Die Miete liegt ${Fmt.num(k.vsMiete, 0)} % über der Vergleichsmiete – Mietpreisbremse/Mietspiegel prüfen, Miete ist ggf. nicht haltbar.`);
-      else if (k.vsMiete < -10) add('info', `Die Miete liegt ${Fmt.num(-k.vsMiete, 0)} % unter der Vergleichsmiete – mögliches Mietsteigerungspotenzial (Kappungsgrenzen beachten).`);
-    }
-    if (k.wf > 0 && k.jkm > 0 && k.bewirtOhneAusfall / k.wf < 15)
-      add('info', `Verwaltung + Instandhaltung betragen nur ${Fmt.num(k.bewirtOhneAusfall / k.wf)} €/m²/Jahr – üblich sind etwa 15–35 €/m²/Jahr. Annahme prüfen.`);
-    if (fin) {
-      if (fin.ltv > 100) add('warn', `Beleihungsauslauf ${Fmt.num(fin.ltv, 0)} %: Vollfinanzierung inkl. Nebenkosten – schlechtere Konditionen, hohes Risiko.`);
-      else if (fin.ltv > 90) add('warn', `Beleihungsauslauf ${Fmt.num(fin.ltv, 0)} %: hohe Fremdfinanzierung, Zinsaufschläge wahrscheinlich.`);
-      if (fin.darlehen > 0) {
-        if (!fin.plan.getilgt) add('warn', 'Mit dieser Rate wird das Darlehen nicht (in 60 Jahren) getilgt – Rate erhöhen.');
-        else if (fin.tilgungStart < 2) add('warn', `Anfangstilgung nur ${Fmt.num(fin.tilgungStart)} %: sehr lange Laufzeit und hohe Zinskosten. Üblich sind mindestens 2 %.`);
-        if (fin.plan.restNachBindung > fin.darlehen * 0.5)
-          add('info', `Nach Ende der Zinsbindung sind noch ${Fmt.num(fin.plan.restNachBindung / fin.darlehen * 100, 0)} % des Darlehens offen – Zinsänderungsrisiko (siehe Szenarien unter Finanzierung).`);
-        if (k.nettoRendite != null && k.nettoRendite < fin.plan.p.zins1)
-          add('warn', `Nettomietrendite (${Fmt.pct(k.nettoRendite)}) liegt unter dem Darlehenszins (${Fmt.pct(fin.plan.p.zins1)}): Fremdkapital wirkt als negativer Hebel.`);
-      }
-    }
-    if (cf) {
-      if (cf.vor < 0) add('warn', `Negativer Cashflow: ca. ${Fmt.eur(-cf.proMonat)} pro Monat Zuzahlung vor Steuern. Reserve einplanen.`);
-      else add('ok', `Positiver Cashflow vor Steuern: ca. ${Fmt.eur(cf.proMonat)} pro Monat.`);
-      if (cf.dscr != null && cf.dscr < 1) add('warn', 'Schuldendienstdeckung unter 1: Die Nettomiete deckt Zins und Tilgung nicht.');
-    }
-    add('info', 'Spekulationsfrist: Gewinne aus dem Verkauf innerhalb von 10 Jahren sind in der Regel steuerpflichtig (bei Vermietung).');
-    return h;
-  }
-}
-
-/* =====================================================================
-   PERSISTENZ
-   ===================================================================== */
-class Speicher {
-  static laden() { try { const r = localStorage.getItem(SPEICHER_KEY); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
-  static speichern(s) { try { localStorage.setItem(SPEICHER_KEY, JSON.stringify(s)); } catch (e) { /* z. B. privater Modus */ } }
-}
-
-// ===== UI =====
 
 /* =====================================================================
    DIAGRAMME (Chart.js)
@@ -437,7 +128,7 @@ class Diagramme {
     }};
   }
   basis(c) {
-    Chart.defaults.color = c.muted;
+    if (typeof Chart !== 'undefined') Chart.defaults.color = c.muted;   // offline: Diagramme entfallen, Rest läuft
     return {responsive:true, maintainAspectRatio:false, animation:false,
             interaction:{mode:'index', intersect:false}};
   }
@@ -485,6 +176,7 @@ const OPT_STUFEN = (a, b, c, d, e) => [[1, '1 – ' + a], [2, '2 – ' + b], [3,
 const FELDER_OBJEKT = [
   {gruppe:'Objekt und Lage', felder:[
     {k:'name', l:'Bezeichnung', t:'text', voll:true},
+    {k:'link', l:'Link zum Inserat', t:'text', voll:true},
     {k:'ort', l:'Lage (Adresse / Stadtteil)', t:'text', voll:true},
     {k:'bundesland', l:'Bundesland', t:'select', o:OPT_BUNDESLAND, h:'setzt die Grunderwerbsteuer'},
     {k:'art', l:'Objektart', t:'select', o:['Eigentumswohnung','Einfamilienhaus','Mehrfamilienhaus','Sonstige'].map(x => [x, x])},
@@ -543,6 +235,101 @@ const FELDER_FINANZ = [
 ];
 
 /* =====================================================================
+   FORMULARDEFINITIONEN der automatischen Suche (Kriterien, Suchprofile)
+   ===================================================================== */
+const INTERVALLE = [[30, 'alle 30 Minuten'], [60, 'stündlich'], [120, 'alle 2 Stunden'], [240, 'alle 4 Stunden'], [720, 'alle 12 Stunden']];
+
+const FELDER_KRITERIEN = [
+  {k:'minScore', l:'Mindest-Score für die Übersicht', u:'0–100', t:'number'},
+  {k:'pushScore', l:'Push-Nachricht ab Score', u:'0–100', t:'number'},
+  {k:'minBrutto', l:'Bruttomietrendite mindestens', u:'%', t:'number', opt:true},
+  {k:'maxPreis', l:'Kaufpreis höchstens', u:'€', t:'number', opt:true},
+  {k:'minFlaeche', l:'Wohnfläche mindestens', u:'m²', t:'number', opt:true},
+  {k:'maxFlaeche', l:'Wohnfläche höchstens', u:'m²', t:'number', opt:true},
+  {k:'minZimmer', l:'Zimmer mindestens', t:'number', opt:true},
+  {k:'energieSchlechtestens', l:'Energieklasse höchstens', t:'select', o:[['', 'egal'], ...ENERGIEKLASSEN.map(x => [x, x])]}
+];
+
+const FELDER_PROFIL = [
+  {k:'aktiv', l:'Profil aktiv', t:'checkbox', voll:true},
+  {k:'name', l:'Name (Stadt / Region)', t:'text', voll:true},
+  {k:'url', l:'Such-Adresse von ImmoScout24', t:'text', voll:true, h:'Suche mit Filtern einstellen, „Neueste zuerst“ wählen und die Adresse aus der Browserzeile einfügen'},
+  {k:'bundesland', l:'Bundesland', t:'select', o:OPT_BUNDESLAND, h:'für die Grunderwerbsteuer'},
+  {k:'mieteQm', l:'Erwartete Kaltmiete', u:'€/m² Monat', t:'number', h:'Annahme für die Rendite, im Inserat steht sie selten'},
+  {k:'marktQm', l:'Marktpreis der Lage', u:'€/m²', t:'number', opt:true},
+  {k:'ekProzent', l:'Eigenkapital zusätzlich zu den Nebenkosten', u:'% vom Preis', t:'number'},
+  {k:'zins', l:'Zins für die Bewertung', u:'% p. a.', t:'number'}
+];
+
+/* =====================================================================
+   GITHUB-ANBINDUNG: Einstellungen ins Repository schreiben, Suche starten
+   Das Zugriffstoken liegt nur im Browser dieses Geräts (localStorage), nie im Backup-Export.
+   ===================================================================== */
+const GH_KEY = 'immoAnalyse.github';
+class Github {
+  constructor(cfg) { this.cfg = cfg || {repo:'', token:''}; }
+
+  static laden() {
+    let c = null;
+    try { c = JSON.parse(localStorage.getItem(GH_KEY)); } catch (e) { /* ohne Speicher: leer starten */ }
+    return new Github(c && c.repo ? c : {repo:Github.erkenneRepo(), token:''});
+  }
+  // GitHub-Pages-Adresse https://NAME.github.io/REPO/ -> "NAME/REPO"
+  static erkenneRepo() {
+    if (!location.hostname.endsWith('.github.io')) return '';
+    const repo = location.pathname.split('/')[1];
+    return repo ? location.hostname.split('.')[0] + '/' + repo : '';
+  }
+  speichern(repo, token) {
+    this.cfg = {repo:repo.trim(), token:token.trim()};
+    try { localStorage.setItem(GH_KEY, JSON.stringify(this.cfg)); } catch (e) { /* z. B. privater Modus */ }
+  }
+  bereit() { return !!(this.cfg.repo && this.cfg.token); }
+
+  // Aufruf der GitHub-API für dieses Repository
+  async api(pfad, opt = {}) {
+    const r = await fetch('https://api.github.com/repos/' + this.cfg.repo + pfad, Object.assign({}, opt, {
+      headers:Object.assign({Authorization:'Bearer ' + this.cfg.token, Accept:'application/vnd.github+json',
+                             'X-GitHub-Api-Version':'2022-11-28'}, opt.headers || {})}));
+    if (!r.ok) {
+      const text = r.status === 401 ? 'Token ungültig oder abgelaufen'
+        : r.status === 403 || r.status === 404 ? 'keine Berechtigung, oder Repository/Datei nicht gefunden (' + r.status + ')'
+        : r.status === 409 || r.status === 422 ? 'Datei wurde zwischenzeitlich geändert, bitte „Neu laden“ (' + r.status + ')'
+        : 'GitHub-Fehler ' + r.status;
+      throw new Error(text);
+    }
+    return r;
+  }
+  // JSON-Datei lesen, liefert Inhalt und sha (für späteres Überschreiben)
+  async lies(pfad) {
+    const d = await (await this.api('/contents/' + pfad + '?t=' + Date.now(), {cache:'no-store'})).json();
+    const text = new TextDecoder().decode(Uint8Array.from(atob(d.content.replace(/\n/g, '')), c => c.charCodeAt(0)));
+    return {sha:d.sha, daten:JSON.parse(text)};
+  }
+  // Größere JSON-Datei roh lesen (z. B. data/funde.json), immer der aktuelle Stand
+  async liesRoh(pfad) {
+    const r = await this.api('/contents/' + pfad + '?t=' + Date.now(), {cache:'no-store', headers:{Accept:'application/vnd.github.raw+json'}});
+    return r.json();
+  }
+  // JSON-Datei schreiben (Commit), liefert die neue sha
+  async schreibe(pfad, daten, sha, nachricht) {
+    const bytes = new TextEncoder().encode(JSON.stringify(daten, null, 2) + '\n');
+    let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); });
+    const r = await this.api('/contents/' + pfad, {method:'PUT', body:JSON.stringify({message:nachricht, content:btoa(bin), sha})});
+    return (await r.json()).content.sha;
+  }
+  // Startet den Suchlauf sofort (Workflow "suche.yml")
+  async starteLauf() {
+    const info = await (await this.api('')).json();
+    await this.api('/actions/workflows/suche.yml/dispatches', {method:'POST', body:JSON.stringify({ref:info.default_branch})});
+  }
+  async letzterLauf() {
+    const d = await (await this.api('/actions/workflows/suche.yml/runs?per_page=1&t=' + Date.now(), {cache:'no-store'})).json();
+    return (d.workflow_runs || [])[0] || null;
+  }
+}
+
+/* =====================================================================
    APP / OBERFLÄCHE
    ===================================================================== */
 class App {
@@ -552,10 +339,18 @@ class App {
       ? {objekte:g.objekte.map(Immobilie.normalisiere), aktivId:g.aktivId, sort:g.sort || 'score'}
       : {objekte:[Immobilie.beispiel()], aktivId:null, sort:'score'};
     if (!this.aktiv()) this.s.aktivId = this.s.objekte[0] ? this.s.objekte[0].id : null;
+    // Zuletzt verwendete Import-Einstellungen (Bundesland, Annahmen für Miete und Marktpreis)
+    this.s.imp = Object.assign({bundesland:'NW', mieteQm:'', marktQm:''}, (g && g.imp) || {});
+    this.s.fs = Object.assign({}, (g && g.fs) || {});     // Funde: Inserat-ID -> 'ok' (übernommen) | 'hide' (ausgeblendet)
+    this.funde = null;                                     // zuletzt geladene data/funde.json
+    this.es = Einstellungen.standard(); this.esSha = null; this.esDirty = false;   // Einstellungen der Suche
+    this.lauf = {text:'', laeuft:false}; this.pollMs = 8000;                        // Status von "Jetzt prüfen"
+    this.gh = Github.laden();                                                       // GitHub-Verbindung (Token nur in diesem Browser)
     this.tab = 'objekte';
     this.diagramme = new Diagramme();
     this.bind();
     this.setTab('objekte');
+    this.ladeEinstellungen();
   }
   aktiv() { return this.s.objekte.find(o => o.id === this.s.aktivId) || null; }
   speichern() { Speicher.speichern(this.s); }
@@ -574,10 +369,11 @@ class App {
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
     document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'view-' + t));
     this.renderHeader(); this.renderTab(); window.scrollTo(0, 0);
+    if (t === 'objekte') this.ladeFunde();
   }
   renderTab() {
     ({objekte:() => this.renderObjekte(), eingabe:() => this.renderEingabe(), analyse:() => this.renderAnalyse(),
-      finanz:() => this.renderFinanz(), backup:() => this.renderBackup()})[this.tab]();
+      finanz:() => this.renderFinanz(), suche:() => this.renderSuche(), backup:() => this.renderBackup()})[this.tab]();
   }
   renderHeader() {
     const sel = $('#objWahl');
@@ -607,6 +403,15 @@ class App {
     } else if (a === 'ek-vorschlag' && o) {
       const nk = Rechner.nebenkosten(o, o.finanz.kaufpreis).summe;
       o.finanz.eigenkapital = Math.round(nk + 0.2 * o.finanz.kaufpreis); this.speichern(); this.renderFinanz();
+    } else if (a === 'jetzt-pruefen') { this.jetztPruefen();
+    } else if (a === 'gh-speichern') { this.verbindungSpeichern();
+    } else if (a === 'es-speichern') { this.einstellungenSpeichern();
+    } else if (a === 'es-laden') { this.ladeEinstellungen(true);
+    } else if (a === 'profil-neu') { this.es.profile.push(Einstellungen.standardProfil()); this.esAenderung(); this.renderSuche();
+    } else if (a === 'profil-del') { this.es.profile.splice(parseInt(id, 10), 1); this.esAenderung(); this.renderSuche();
+    } else if (a === 'fund-ok') { this.fundUebernehmen(id);
+    } else if (a === 'fund-hide') { this.s.fs[id] = 'hide'; this.speichern(); this.renderObjekte();
+    } else if (a === 'import-inserat') { this.inseratImportieren();
     } else if (a === 'export') { this.exportieren();
     } else if (a === 'import') { $('#importDatei').click();
     } else if (a === 'alles-loeschen') {
@@ -618,6 +423,7 @@ class App {
     const el = e.target;
     if (el.id === 'importDatei') return this.importieren(el.files[0]);
     if (el.id === 'sort') { this.s.sort = el.value; this.speichern(); return this.renderObjekte(); }
+    if (/^(a|k|p\d+)$/.test(el.dataset.s || '')) return this.einstellungGeaendert(el);   // Tab "Suche"
     const o = this.aktiv(); if (!o) return;
     if (el.dataset.check != null && el.dataset.check !== '') {       // Checkliste
       o.check[el.dataset.check] = el.checked; this.speichern();
@@ -627,11 +433,7 @@ class App {
     }
     const k = el.dataset.k; if (!k) return;
     const ziel = el.dataset.s === 'f' ? o.finanz : o;
-    let v;
-    if (el.type === 'checkbox') v = el.checked;
-    else if (el.type === 'number') { v = el.value === '' ? (el.dataset.opt ? null : 0) : parseFloat(el.value); if (Number.isNaN(v)) v = 0; }
-    else if (el.tagName === 'SELECT' && el.dataset.num) v = parseFloat(el.value);
-    else v = el.value;
+    const v = this.lesWert(el);
     ziel[k] = v;
     if (k === 'bundesland' && el.dataset.s === 'o') {                 // Grunderwerbsteuer automatisch setzen
       o.grest = BUNDESLAENDER[v][1];
@@ -666,7 +468,7 @@ class App {
     }).join('');
   }
   kpi(l, v, cls = '', s = '') { return `<div class="kpi ${cls}"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`; }
-  kopf(o) { return `<div class="sub" style="margin:0 2px 8px">${esc(o.name)}${o.ort ? ' · ' + esc(o.ort) : ''}</div>`; }
+  kopf(o) { return `<div class="sub" style="margin:0 2px 8px">${esc(o.name)}${o.ort ? ' · ' + esc(o.ort) : ''}${o.erkanntAm ? ' · erkannt ' + Fmt.vor(o.erkanntAm) : ''}</div>`; }
   leer(text) {
     return `<div class="card"><p>${text}</p><button class="btn primary" data-action="neu">+ Neues Objekt</button></div>`;
   }
@@ -674,7 +476,7 @@ class App {
   /* ---------- Tab: Objekte ---------- */
   renderObjekte() {
     const box = $('#view-objekte');
-    if (!this.s.objekte.length) { box.innerHTML = this.leer('Noch kein Objekt vorhanden.'); return; }
+    if (!this.s.objekte.length) { box.innerHTML = this.fundeKarte() + this.importKarte() + this.leer('Noch kein Objekt vorhanden.'); return; }
     const liste = this.s.objekte.map(o => ({o, a:Bewertung.analyse(o)}));
     const sortierer = {
       score: (x, y) => (y.a.score ? y.a.score.wert : -1) - (x.a.score ? x.a.score.wert : -1),
@@ -682,7 +484,7 @@ class App {
       preis: (x, y) => (x.o.kaufpreis || 1e15) - (y.o.kaufpreis || 1e15)
     };
     liste.sort(sortierer[this.s.sort] || sortierer.score);
-    box.innerHTML = `
+    box.innerHTML = this.fundeKarte() + this.importKarte() + `
       <div class="card row">
         <button class="btn primary" data-action="neu">+ Neues Objekt</button>
         <select id="sort" style="width:auto;margin:0">
@@ -694,11 +496,13 @@ class App {
         ${a.score ? `<span class="badge ${a.score.cls}">${a.score.wert}</span>` : ''}
         <div class="t">${esc(o.name)}</div>
         <div class="sub">${esc(o.ort || '–')} · ${esc(o.art)} · ${Fmt.num(o.wohnflaeche, 0)} m² · Energie ${esc(o.energieklasse)}</div>
+        ${/^https?:\/\//.test(o.link || '') ? `<div class="sub"><a href="${esc(o.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Zum Inserat</a></div>` : ''}
         <div class="chips">
           <span class="chip">Kaufpreis ${Fmt.eur(o.kaufpreis)}</span>
           <span class="chip">Brutto ${Fmt.pct(a.k.bruttoRendite)}</span>
           <span class="chip">Netto ${Fmt.pct(a.k.nettoRendite)}</span>
           <span class="chip">Faktor ${Fmt.num(a.k.faktor)}</span>
+          ${o.erkanntAm ? `<span class="chip">erkannt ${Fmt.vor(o.erkanntAm)}</span>` : ''}
           ${a.cf && a.fin.darlehen > 0 ? `<span class="chip">Cashflow ${Fmt.eur(a.cf.proMonat)}/Mon.</span>` : ''}
         </div>
         <div class="row">
@@ -707,6 +511,202 @@ class App {
           <button class="btn danger" data-action="del" data-id="${o.id}">Löschen</button>
         </div>
       </div>`).join('');
+  }
+
+  /* ---------- Tab: Suche (automatische Prüfung steuern) ---------- */
+  // Liest den Wert eines Eingabefelds typgerecht (Zahl, Häkchen, Auswahl, Text)
+  lesWert(el) {
+    if (el.type === 'checkbox') return el.checked;
+    if (el.type === 'number') { const v = el.value === '' ? (el.dataset.opt ? null : 0) : parseFloat(el.value); return Number.isNaN(v) ? 0 : v; }
+    if (el.tagName === 'SELECT' && el.dataset.num) return parseFloat(el.value);
+    return el.value;
+  }
+  // Feld der Einstellungen geändert: a = Automatik, k = Kriterien, pN = Suchprofil Nr. N
+  einstellungGeaendert(el) {
+    const s = el.dataset.s;
+    const ziel = s === 'a' ? this.es.auto : s === 'k' ? this.es.kriterien : this.es.profile[parseInt(s.slice(1), 10)];
+    if (!ziel) return;
+    ziel[el.dataset.k] = this.lesWert(el);
+    this.esAenderung();
+  }
+  esAenderung() { this.esDirty = true; const l = $('#esLeiste'); if (l) l.classList.add('on'); }
+
+  // Lädt die Einstellungen: mit Verbindung direkt aus dem Repository, sonst von der veröffentlichten Seite
+  async ladeEinstellungen(melden = false) {
+    try {
+      if (this.gh.bereit()) { const r = await this.gh.lies('config/einstellungen.json'); this.esSha = r.sha; this.es = Einstellungen.normalisiere(r.daten); }
+      else { const r = await fetch('config/einstellungen.json?t=' + Date.now(), {cache:'no-store'}); if (r.ok) this.es = Einstellungen.normalisiere(await r.json()); }
+      this.esDirty = false;
+      if (melden) alert('Einstellungen neu geladen.');
+    } catch (e) { if (melden) alert('Laden fehlgeschlagen: ' + e.message); }
+    if (this.tab === 'suche') this.renderSuche();
+    const box = $('#fundeBox');
+    if (this.tab === 'objekte' && box) box.innerHTML = this.fundeInhalt();      // Kriterien können sich geändert haben
+  }
+  async einstellungenSpeichern() {
+    if (!this.gh.bereit()) { alert('Bitte zuerst unten die Verbindung zu GitHub einrichten.'); return; }
+    const fehler = this.es.profile.filter(p => p.aktiv).map(p => Einstellungen.pruefeProfil(p)).find(Boolean);
+    if (fehler) { alert(fehler); return; }
+    try {
+      if (!this.esSha) this.esSha = (await this.gh.lies('config/einstellungen.json')).sha;
+      this.esSha = await this.gh.schreibe('config/einstellungen.json', this.es, this.esSha, 'Einstellungen der Suche geändert');
+      this.esDirty = false; $('#esLeiste').classList.remove('on');
+      alert('Gespeichert. Die Änderungen gelten ab dem nächsten Lauf.');
+    } catch (e) { alert('Speichern fehlgeschlagen: ' + e.message); }
+  }
+  async verbindungSpeichern() {
+    this.gh.speichern($('#ghRepo').value, $('#ghToken').value || this.gh.cfg.token);
+    this.esSha = null;
+    await this.ladeEinstellungen(true);
+    this.ladeFunde();
+  }
+
+  // "Jetzt prüfen": startet den Lauf auf GitHub und wartet auf das Ergebnis (höchstens ca. 5 Minuten)
+  async jetztPruefen() {
+    if (this.lauf.laeuft) return;
+    if (!this.gh.bereit()) { alert('Bitte zuerst im Tab „Suche“ die Verbindung zu GitHub einrichten.'); return; }
+    this.setzeLauf('Prüfung wird gestartet …', true);
+    const start = Date.now();
+    let fertig = false;
+    try {
+      await this.gh.starteLauf();
+      for (let i = 0; i < 40 && !fertig; i++) {
+        await new Promise(r => setTimeout(r, this.pollMs));
+        const run = await this.gh.letzterLauf();
+        if (!run || Date.parse(run.created_at) < start - 120000) { this.setzeLauf('Warte auf den Start …', true); continue; }
+        if (run.status !== 'completed') { this.setzeLauf('Prüfung läuft …', true); continue; }
+        if (run.conclusion !== 'success') throw new Error('Lauf fehlgeschlagen (Details unter „Actions“ auf GitHub)');
+        fertig = true;
+      }
+      await this.ladeFunde();
+      this.setzeLauf(fertig ? 'Fertig um ' + new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'})
+                            : 'Dauert länger als erwartet, bitte später die Seite neu laden.', false);
+    } catch (e) { this.setzeLauf('Fehler: ' + e.message, false); }
+  }
+  setzeLauf(text, laeuft) {
+    this.lauf = {text, laeuft};
+    document.querySelectorAll('.laufStatus').forEach(el => { el.textContent = text; });
+  }
+
+  renderSuche() {
+    const box = $('#view-suche'), e = this.es, d = this.funde, verbunden = this.gh.bereit();
+    const stand = d && d.aktualisiert ? 'Letzter Lauf: ' + new Date(d.aktualisiert).toLocaleString('de-DE', {dateStyle:'short', timeStyle:'short'})
+                                        + ' (Status: ' + (d.status || 'ok') + ')' : 'Noch kein Lauf';
+    const naechste = (e.auto.aktiv && d && d.aktualisiert)
+      ? ' · nächste Prüfung ca. ' + new Date(Date.parse(d.aktualisiert) + e.auto.intervallMinuten * 60000).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'}) : '';
+    box.innerHTML = `
+      <div class="leiste${this.esDirty ? ' on' : ''}" id="esLeiste"><span>Ungespeicherte Änderungen</span>
+        <button class="btn primary" data-action="es-speichern">Speichern</button></div>
+      ${verbunden ? '' : '<div class="note warn">Zum Steuern der Suche zuerst unten die Verbindung zu GitHub einrichten (einmalig).</div>'}
+      <div class="card"><h2>Automatische Prüfung</h2>
+        <div class="fields">
+          ${this.feld({k:'aktiv', l:'Automatisch prüfen', t:'checkbox', voll:true}, e.auto.aktiv, 'a')}
+          ${this.feld({k:'intervallMinuten', l:'Prüf-Intervall', t:'select', num:true, o:INTERVALLE}, e.auto.intervallMinuten, 'a')}
+        </div>
+        <p class="sub">${esc(stand)}${naechste}<br>GitHub kann geplante Läufe um einige Minuten verzögern.</p>
+        <div class="row"><button class="btn primary" data-action="jetzt-pruefen">Jetzt prüfen</button></div>
+        <div class="sub laufStatus">${esc(this.lauf.text)}</div></div>
+      <details class="card" open><summary>Kriterien für die Übersicht</summary>
+        <div class="fields">${FELDER_KRITERIEN.map(f => this.feld(f, e.kriterien[f.k], 'k')).join('')}</div>
+        <small class="fine">Nur Inserate, die alle gesetzten Kriterien erfüllen, erscheinen unter „Neue Funde“. Leere Felder werden ignoriert. Die Kriterien gelten auch für bereits gefundene Inserate.</small></details>
+      <details class="card" open><summary>Suchprofile (Städte / Regionen)</summary>
+        ${e.profile.map((p, i) => `<div class="card" style="margin:8px 0"><div class="fields">${FELDER_PROFIL.map(f => this.feld(f, p[f.k], 'p' + i)).join('')}</div>
+          <div class="row" style="margin-top:8px"><button class="btn danger" data-action="profil-del" data-id="${i}">Profil löschen</button></div></div>`).join('')}
+        <button class="btn" data-action="profil-neu">+ Suchprofil</button></details>
+      <details class="card"${verbunden ? '' : ' open'}><summary>Verbindung zu GitHub</summary>
+        <div class="fields">
+          <div class="fld voll"><label>Repository (Name/Repo)<input type="text" id="ghRepo" value="${esc(this.gh.cfg.repo)}" placeholder="meinname/immobilien"></label></div>
+          <div class="fld voll"><label>Zugriffstoken<input type="password" id="ghToken" autocomplete="off"
+            placeholder="${this.gh.cfg.token ? 'gespeichert (leer lassen = behalten)' : 'github_pat_…'}"></label></div>
+        </div>
+        <p class="sub">Token erstellen: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens. Repository access: nur dieses Repository. Berechtigungen: <b>Contents</b> und <b>Actions</b> jeweils „Read and write“. Das Token bleibt nur in diesem Browser gespeichert.</p>
+        <button class="btn primary" data-action="gh-speichern">Verbindung speichern</button></details>
+      <div class="row"><button class="btn" data-action="es-laden">Einstellungen neu laden</button></div>`;
+  }
+
+  /* ---------- Automatische Funde (data/funde.json, geschrieben vom GitHub-Suchjob) ---------- */
+  async ladeFunde() {
+    let d = null;
+    try { if (this.gh.bereit()) d = await this.gh.liesRoh('data/funde.json'); } catch (e) { d = null; }   // mit Verbindung: aktueller Stand
+    if (!d) {
+      try { const r = await fetch('data/funde.json?t=' + Date.now(), {cache:'no-store'}); d = r.ok ? await r.json() : null; }
+      catch (e) { d = null; }                            // offline oder Suche nicht eingerichtet
+    }
+    this.funde = d;
+    const box = $('#fundeBox');
+    if (this.tab === 'objekte' && box) box.innerHTML = this.fundeInhalt();
+    if (this.tab === 'suche') this.renderSuche();
+  }
+  fundeKarte() { return `<div id="fundeBox">${this.fundeInhalt()}</div>`; }
+  fundeInhalt() {
+    const d = this.funde, kr = this.es.kriterien;
+    const knopf = `<div class="row"><button class="btn primary" data-action="jetzt-pruefen">Jetzt prüfen</button></div>
+      <div class="sub laufStatus">${esc(this.lauf.text)}</div>`;
+    if (!d || !Array.isArray(d.funde))
+      return `<div class="card"><h2>Neue Funde</h2><p class="sub">Noch keine Daten. Die automatische Suche unter „Suche“ einrichten.</p>${knopf}</div>`;
+    const stand = d.aktualisiert ? new Date(d.aktualisiert).toLocaleString('de-DE', {dateStyle:'short', timeStyle:'short'}) : 'noch kein Lauf';
+    const warn = (d.status && d.status !== 'ok') ? `<div class="note warn">${esc(d.meldung || 'Der letzte Suchlauf war nicht erfolgreich.')}</div>` : '';
+    // Alle gespeicherten Inserate bewerten, angezeigt werden nur die, die die aktuellen Kriterien erfüllen
+    const bewertet = d.funde.filter(f => !this.s.fs[f.id]).map(f => {
+      const o = Immobilie.normalisiere(JSON.parse(JSON.stringify(f.objekt)));
+      return {f, o, a:Bewertung.analyse(o)};
+    });
+    const offen = bewertet.filter(b => Kriterien.passt(b.o, b.a, kr).passt);
+    const liste = offen.map(({f, o, a}) => {
+      const k = a.k;
+      const link = /^https?:\/\//.test(o.link || '') ? ` · <a href="${esc(o.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : '';
+      return `<div class="card" style="margin:8px 0">
+        ${a.score ? `<span class="badge ${a.score.cls}">${a.score.wert}</span>` : ''}
+        <div style="font-weight:700">${esc(o.name)}</div>
+        <div class="sub">${esc(o.ort || '–')} · ${Fmt.num(o.wohnflaeche, 0)} m² · Energie ${esc(o.energieklasse)}${link}</div>
+        <div class="chips"><span class="chip">${Fmt.eur(o.kaufpreis)}</span><span class="chip">Brutto ${Fmt.pct(k.bruttoRendite)}</span>
+          <span class="chip">Faktor ${Fmt.num(k.faktor)}</span>
+          <span class="chip" title="${esc(new Date(f.gefunden).toLocaleString('de-DE'))}">erkannt ${Fmt.vor(f.gefunden)}</span></div>
+        <div class="row"><button class="btn primary" data-action="fund-ok" data-id="${esc(f.id)}">Übernehmen</button>
+          <button class="btn" data-action="fund-hide" data-id="${esc(f.id)}">Ausblenden</button></div></div>`;
+    }).join('');
+    const verworfen = bewertet.length - offen.length;
+    return `<details class="card" open><summary>Neue Funde (${offen.length}) · Stand ${stand}</summary>${warn}
+      ${liste || '<p class="sub">Keine neuen Funde, die die Kriterien erfüllen.</p>'}
+      ${verworfen ? `<small class="fine">${verworfen} weitere Inserate erfüllen die Kriterien nicht.</small>` : ''}
+      ${knopf}
+      <small class="fine">Miete und Finanzierung sind Annahmen aus dem Suchprofil. Bitte im Inserat prüfen.</small></details>`;
+  }
+  // Fund als eigenes Objekt in die Liste übernehmen
+  fundUebernehmen(id) {
+    const f = this.funde && this.funde.funde.find(x => x.id === id);
+    if (!f) return;
+    const o = Immobilie.normalisiere(JSON.parse(JSON.stringify(f.objekt))); o.id = neueId();
+    this.s.objekte.push(o); this.s.aktivId = o.id; this.s.fs[id] = 'ok'; this.speichern(); this.setTab('analyse');
+  }
+
+  /* ---------- Inserat-Import ---------- */
+  importKarte() {
+    const i = this.s.imp;
+    const bl = OPT_BUNDESLAND.map(([c, n]) => `<option value="${c}"${c === i.bundesland ? ' selected' : ''}>${n}</option>`).join('');
+    return `<details class="card" id="importKarte"><summary>Inserat importieren (aus ImmoScout kopiert)</summary>
+      <p class="sub">Inserat öffnen, den Seitentext kopieren (alles markieren, kopieren) und hier einfügen. Die App erkennt Preis, Fläche, Zimmer, Baujahr, Energieklasse usw. und berechnet den Score.</p>
+      <div class="fields">
+        <div class="fld voll"><label>Inserat-Text<textarea id="impText" rows="6" placeholder="Hier einfügen …"></textarea></label></div>
+        <div class="fld voll"><label>Link zum Inserat (optional)<input type="text" id="impUrl" placeholder="https://www.immobilienscout24.de/expose/…"></label></div>
+        <div class="fld"><label>Bundesland<select id="impBL">${bl}</select></label></div>
+        <div class="fld"><label>Annahme Miete <span class="u">(€/m² Monat)</span><input type="number" step="any" inputmode="decimal" id="impMiete" value="${i.mieteQm}"></label><small>nur wenn im Inserat keine Miete steht</small></div>
+        <div class="fld"><label>Marktpreis der Lage <span class="u">(€/m²)</span><input type="number" step="any" inputmode="decimal" id="impMarkt" value="${i.marktQm}"></label></div>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" data-action="import-inserat">Importieren</button></div></details>`;
+  }
+  inseratImportieren() {
+    const text = $('#impText').value.trim();
+    if (text.length < 30) { alert('Bitte zuerst den Inserat-Text einfügen.'); return; }
+    this.s.imp = {bundesland:$('#impBL').value, mieteQm:parseFloat($('#impMiete').value) || '', marktQm:parseFloat($('#impMarkt').value) || ''};
+    const r = InseratParser.alsImmobilie(text, {url:$('#impUrl').value.trim(), bundesland:this.s.imp.bundesland,
+                                                mieteQm:this.s.imp.mieteQm || 0, marktQm:this.s.imp.marktQm || 0});
+    if (!r.erkannt.length) { alert('Es wurden keine Daten erkannt. Wurde der gesamte Inseratstext kopiert?'); return; }
+    this.s.objekte.push(r.objekt); this.s.aktivId = r.objekt.id; this.speichern();
+    const a = Bewertung.analyse(r.objekt);
+    alert('Importiert: ' + r.erkannt.length + ' Felder erkannt' + (a.score ? ' · Score ' + a.score.wert + ' (' + a.score.urteil + ')' : '')
+          + (r.fehlend.length ? '\nBitte ergänzen: ' + r.fehlend.join(', ') : ''));
+    this.setTab('eingabe');
   }
 
   /* ---------- Tab: Eingabe ---------- */

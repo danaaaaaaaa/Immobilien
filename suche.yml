@@ -1,0 +1,34 @@
+name: Immobilien-Suche
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'    # alle 30 Minuten; ob wirklich geprüft wird, steuert die App (Ein/Aus und Intervall)
+  workflow_dispatch: {}        # "Jetzt prüfen" in der App (oder manuell: Actions -> Run workflow)
+
+permissions:
+  contents: write              # nötig, damit der Job data/funde.json speichern darf
+
+concurrency:
+  group: immo-suche
+  cancel-in-progress: false
+
+jobs:
+  suche:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Suche ausführen
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}   # geheimer ntfy-Kanalname (Secret)
+          APP_URL: ${{ vars.APP_URL }}            # Adresse deiner App (Variable, optional)
+        run: node scripts/suche.js
+      - name: Ergebnisse speichern
+        run: |
+          git config user.name "immo-bot"
+          git config user.email "immo-bot@users.noreply.github.com"
+          git add data
+          git diff --staged --quiet || (git commit -m "Suche: neue Daten" && git pull --rebase && git push)
