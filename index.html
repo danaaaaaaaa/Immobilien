@@ -275,30 +275,62 @@ class Github {
     return new Github(c && c.repo ? c : {repo:Github.erkenneRepo(), token:''});
   }
   // GitHub-Pages-Adresse https://NAME.github.io/REPO/ -> "NAME/REPO"
+  // (liegt die App direkt unter https://NAME.github.io/, heißt das Repository NAME.github.io)
   static erkenneRepo() {
     if (!location.hostname.endsWith('.github.io')) return '';
-    const repo = location.pathname.split('/')[1];
-    return repo ? location.hostname.split('.')[0] + '/' + repo : '';
+    const name = location.hostname.split('.')[0], teil = location.pathname.split('/')[1] || '';
+    return name + '/' + (teil && !/\.html?$/i.test(teil) ? teil : name + '.github.io');
+  }
+  // Eingabe bereinigen: auch eine eingefügte Adresse wie https://github.com/NAME/REPO(.git) wird akzeptiert
+  static bereinigeRepo(text) {
+    return text.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
   }
   speichern(repo, token) {
-    this.cfg = {repo:repo.trim(), token:token.trim()};
+    this.cfg = {repo:Github.bereinigeRepo(repo), token:token.trim()};
     try { localStorage.setItem(GH_KEY, JSON.stringify(this.cfg)); } catch (e) { /* z. B. privater Modus */ }
   }
   bereit() { return !!(this.cfg.repo && this.cfg.token); }
 
-  // Aufruf der GitHub-API für dieses Repository
-  async api(pfad, opt = {}) {
-    const r = await fetch('https://api.github.com/repos/' + this.cfg.repo + pfad, Object.assign({}, opt, {
+  // Einzelne Anfrage an die GitHub-API für dieses Repository (wirft nur bei Netzwerkfehlern)
+  anfrage(pfad, opt = {}) {
+    return fetch('https://api.github.com/repos/' + this.cfg.repo + pfad, Object.assign({}, opt, {
       headers:Object.assign({Authorization:'Bearer ' + this.cfg.token, Accept:'application/vnd.github+json',
                              'X-GitHub-Api-Version':'2022-11-28'}, opt.headers || {})}));
+  }
+  // Wie anfrage(), wirft aber bei Fehlerstatus; hinweise = eigene Meldungen je Statuscode
+  async api(pfad, opt = {}, hinweise = {}) {
+    const r = await this.anfrage(pfad, opt);
     if (!r.ok) {
-      const text = r.status === 401 ? 'Token ungültig oder abgelaufen'
-        : r.status === 403 || r.status === 404 ? 'keine Berechtigung, oder Repository/Datei nicht gefunden (' + r.status + ')'
-        : r.status === 409 || r.status === 422 ? 'Datei wurde zwischenzeitlich geändert, bitte „Neu laden“ (' + r.status + ')'
-        : 'GitHub-Fehler ' + r.status;
-      throw new Error(text);
+      throw new Error(hinweise[r.status]
+        || (r.status === 401 ? 'Token ungültig oder abgelaufen'
+          : r.status === 403 || r.status === 404 ? 'keine Berechtigung, oder Repository/Datei nicht gefunden (' + r.status + ')'
+          : r.status === 409 || r.status === 422 ? 'Datei wurde zwischenzeitlich geändert, bitte „Neu laden“ (' + r.status + ')'
+          : 'GitHub-Fehler ' + r.status));
     }
     return r;
+  }
+  // Prüft Schritt für Schritt, woran eine Verbindung scheitert: [{name, ok, hinweis}]
+  async pruefe() {
+    const schritte = [];
+    const teste = async (name, pfad, hinweise) => {
+      const r = await this.anfrage(pfad, {cache:'no-store'});
+      schritte.push({name, ok:r.ok, hinweis:r.ok ? '' : (hinweise[r.status] || 'GitHub-Fehler ' + r.status)});
+      return r.ok;
+    };
+    try {
+      const repoOk = await teste('Repository „' + this.cfg.repo + '“ erreichbar', '', {
+        401:'Das Token ist ungültig oder abgelaufen.',
+        403:'Das Token hat keinen Zugriff auf dieses Repository.',
+        404:'Nicht gefunden. Schreibweise „Name/Repo“ prüfen und im Token genau dieses Repository auswählen (bei privaten Repositories zwingend).'});
+      if (!repoOk) return schritte;                       // ohne Repository sind weitere Prüfungen sinnlos
+      await teste('Datei config/einstellungen.json vorhanden', '/contents/config/einstellungen.json', {
+        403:'Dem Token fehlt die Berechtigung „Contents: Read and write“.',
+        404:'Die Datei fehlt im Repository. Bitte config/einstellungen.json hochladen.'});
+      await teste('Workflow suche.yml vorhanden', '/actions/workflows/suche.yml', {
+        403:'Dem Token fehlt die Berechtigung „Actions: Read and write“.',
+        404:'Die Datei fehlt oder liegt am falschen Ort. Sie muss genau .github/workflows/suche.yml heißen (Ordner mit Punkt am Anfang).'});
+    } catch (e) { schritte.push({name:'Verbindung zu GitHub', ok:false, hinweis:'GitHub nicht erreichbar (Netzwerk?)'}); }
+    return schritte;
   }
   // JSON-Datei lesen, liefert Inhalt und sha (für späteres Überschreiben)
   async lies(pfad) {
@@ -315,13 +347,17 @@ class Github {
   async schreibe(pfad, daten, sha, nachricht) {
     const bytes = new TextEncoder().encode(JSON.stringify(daten, null, 2) + '\n');
     let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); });
-    const r = await this.api('/contents/' + pfad, {method:'PUT', body:JSON.stringify({message:nachricht, content:btoa(bin), sha})});
+    const r = await this.api('/contents/' + pfad, {method:'PUT', body:JSON.stringify({message:nachricht, content:btoa(bin), sha})},
+      {403:'Dem Token fehlt die Berechtigung „Contents: Read and write“.'});
     return (await r.json()).content.sha;
   }
   // Startet den Suchlauf sofort (Workflow "suche.yml")
   async starteLauf() {
-    const info = await (await this.api('')).json();
-    await this.api('/actions/workflows/suche.yml/dispatches', {method:'POST', body:JSON.stringify({ref:info.default_branch})});
+    const info = await (await this.api('', {}, {404:'Repository nicht gefunden oder Token ohne Zugriff. Bitte unter „Suche“ → „Verbindung“ testen.'})).json();
+    await this.api('/actions/workflows/suche.yml/dispatches', {method:'POST', body:JSON.stringify({ref:info.default_branch})}, {
+      403:'Dem Token fehlt die Berechtigung „Actions: Read and write“.',
+      404:'Workflow nicht gefunden. Die Datei muss genau .github/workflows/suche.yml heißen (unter „Suche“ → „Verbindung“ testen).',
+      422:'Der Workflow erlaubt keinen manuellen Start (workflow_dispatch fehlt in suche.yml).'});
   }
   async letzterLauf() {
     const d = await (await this.api('/actions/workflows/suche.yml/runs?per_page=1&t=' + Date.now(), {cache:'no-store'})).json();
@@ -345,7 +381,8 @@ class App {
     this.funde = null;                                     // zuletzt geladene data/funde.json
     this.es = Einstellungen.standard(); this.esSha = null; this.esDirty = false;   // Einstellungen der Suche
     this.lauf = {text:'', laeuft:false}; this.pollMs = 8000;                        // Status von "Jetzt prüfen"
-    this.gh = Github.laden();                                                       // GitHub-Verbindung (Token nur in diesem Browser)
+    this.ghErgebnis = '';                                                           // Ergebnis des Verbindungstests
+    this.gh = Github.laden();                                                     // GitHub-Verbindung (Token nur in diesem Browser)
     this.tab = 'objekte';
     this.diagramme = new Diagramme();
     this.bind();
@@ -557,8 +594,17 @@ class App {
   async verbindungSpeichern() {
     this.gh.speichern($('#ghRepo').value, $('#ghToken').value || this.gh.cfg.token);
     this.esSha = null;
-    await this.ladeEinstellungen(true);
-    this.ladeFunde();
+    if (await this.verbindungTesten()) { await this.ladeEinstellungen(); this.ladeFunde(); }
+  }
+  // Prüft Repository, Einstellungsdatei und Workflow einzeln und nennt bei jedem Fehler die wahrscheinliche Ursache
+  async verbindungTesten() {
+    const box = $('#ghTest');
+    if (!this.gh.bereit()) { box.innerHTML = '<div class="note warn">Bitte Repository und Token eintragen.</div>'; return false; }
+    box.textContent = 'Teste die Verbindung …';
+    const schritte = await this.gh.pruefe();
+    this.ghErgebnis = schritte.map(s => `<div class="note ${s.ok ? 'ok' : 'warn'}">${s.ok ? '✓' : '✗'} ${esc(s.name)}${s.ok ? '' : ': ' + esc(s.hinweis)}</div>`).join('');
+    box.innerHTML = this.ghErgebnis;                     // wird beim Neuaufbau des Tabs wieder angezeigt
+    return schritte.every(s => s.ok);
   }
 
   // "Jetzt prüfen": startet den Lauf auf GitHub und wartet auf das Ergebnis (höchstens ca. 5 Minuten)
@@ -613,14 +659,15 @@ class App {
         ${e.profile.map((p, i) => `<div class="card" style="margin:8px 0"><div class="fields">${FELDER_PROFIL.map(f => this.feld(f, p[f.k], 'p' + i)).join('')}</div>
           <div class="row" style="margin-top:8px"><button class="btn danger" data-action="profil-del" data-id="${i}">Profil löschen</button></div></div>`).join('')}
         <button class="btn" data-action="profil-neu">+ Suchprofil</button></details>
-      <details class="card"${verbunden ? '' : ' open'}><summary>Verbindung zu GitHub</summary>
+      <details class="card"${verbunden && !this.ghErgebnis ? '' : ' open'}><summary>Verbindung zu GitHub</summary>
         <div class="fields">
           <div class="fld voll"><label>Repository (Name/Repo)<input type="text" id="ghRepo" value="${esc(this.gh.cfg.repo)}" placeholder="meinname/immobilien"></label></div>
           <div class="fld voll"><label>Zugriffstoken<input type="password" id="ghToken" autocomplete="off"
             placeholder="${this.gh.cfg.token ? 'gespeichert (leer lassen = behalten)' : 'github_pat_…'}"></label></div>
         </div>
         <p class="sub">Token erstellen: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens. Repository access: nur dieses Repository. Berechtigungen: <b>Contents</b> und <b>Actions</b> jeweils „Read and write“. Das Token bleibt nur in diesem Browser gespeichert.</p>
-        <button class="btn primary" data-action="gh-speichern">Verbindung speichern</button></details>
+        <button class="btn primary" data-action="gh-speichern">Speichern und testen</button>
+        <div id="ghTest" style="margin-top:10px">${this.ghErgebnis || ''}</div></details>
       <div class="row"><button class="btn" data-action="es-laden">Einstellungen neu laden</button></div>`;
   }
 
